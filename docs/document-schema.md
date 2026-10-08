@@ -224,7 +224,7 @@ Fills are solid colors only in V1. Use `#rrggbbaa` for per-fill alpha. Gradients
 
 1. **`data:image/<png|jpeg|webp|gif|svg+xml>[;…],…`** is fully portable. Use it in `.plakat.json` exports and starter templates. Its mime type must equal `mimeType`, and the payload must be valid base64 (with `;base64`) or valid percent-encoding.
 2. **`https://…` or `http://…`** is a remote URL. It must be CORS-enabled for export. Third-party URLs (provider results) are fetched through the server proxy (pipeline doc §3.2).
-3. **`/…` (root-relative; never `//` or `/\`, which URL parsers resolve to another host)** is a file on the hosting Plakat server, for example `/api/uploads/<id>.png`. It is only meaningful on that server.
+3. **`/…` (root-relative; never `//` or `/\`, which URL parsers resolve to another host)** is a file on the hosting Plakat server, for example `/uploads/<sha256>.png` (uploads are content-addressed). It is only meaningful on that server.
 
 Non-`data:` forms may not contain whitespace, backslashes or control characters. Fetching is policy-checked too (`resolveAssetUrl`/`createFetchAssetFetcher`): root-relative srcs must resolve to the base origin, only http(s) is fetched, and **server-side code must pass `allowRemote: false` or an allow-list predicate**, because srcs in imported files are untrusted (SSRF). On import the server rewrites remote srcs to upload or proxy URLs.
 
@@ -484,8 +484,8 @@ The smallest valid hand-written document (everything else defaults):
 
 - Extension `.plakat.json`, MIME type `application/vnd.plakat+json`, UTF-8. The content is the canonical document JSON: 2-space indent and a trailing newline (`serializeDocument`). Templates and designs use the same format, distinguished by `kind`.
 - **Export as file:** `bundleAssets(doc, fetcher)` rewrites every non-`data:` `src` to a base64 `data:` URI. The data URI uses the asset's declared `mimeType`, regardless of the HTTP `Content-Type`. The result is `isPortable(doc) === true`: it renders anywhere with only Google Fonts access. The fetcher is injected, so the browser, the server and tests can each supply their own (`createFetchAssetFetcher(baseUrl)`).
-- **Import:** `parseDocument(text)` runs `JSON.parse`, migration, and strict validation. On import, the server may move `data:` assets into uploads (`dataUriToBytes`, then store, then `mapAssetSources` to rewrite `src` to `/api/uploads/…`) to keep database rows small.
-- Starter templates in `/templates` **must** be portable. CONTRIBUTING.md describes the authoring workflow.
+- **Import:** `parseDocument(text)` runs `JSON.parse`, migration, and strict validation. On import, the server may move `data:` assets into uploads (`dataUriToBytes`, then store, then `mapAssetSources` to rewrite `src` to `/uploads/<sha256>.<ext>`) to keep database rows small.
+- Starter templates in `/templates` **must** be portable. [docs/templates.md](templates.md) describes the authoring workflow.
 - `serializeDocument` validates before writing, so Plakat never emits an invalid file.
 
 ## 15. Decision index

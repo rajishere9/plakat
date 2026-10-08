@@ -1,0 +1,155 @@
+/*
+ * Design tokens. Light theme by default; dark mode follows prefers-color-scheme
+ * unless the root opts out with data-theme="light" (or forces data-theme="dark").
+ */
+:root {
+  color-scheme: light;
+
+  /* Surfaces */
+  --bg: #f3f4f7;
+  --surface: #ffffff;
+  --surface-2: #f7f8fa;
+  --surface-3: #eef0f4;
+  --surface-hover: #f1f2f6;
+  --surface-active: #e8eaf0;
+  --canvas-bg: #e8eaef;
+  --overlay: rgba(17, 19, 26, 0.42);
+
+  /* Lines */
+  --border: #e3e6ec;
+  --border-strong: #cdd2db;
+
+  /* Text */
+  --text: #171a21;
+  --text-2: #565d6d;
+  --text-3: #8b91a0;
+  --text-inverse: #ffffff;
+
+  /* Accent (violet) */
+  --accent: #6a46f5;
+  --accent-hover: #5935e6;
+  --accent-active: #4c2ad1;
+  --accent-soft: #efebff;
+  --accent-soft-2: #e1d9ff;
+  --accent-text: #ffffff;
+  --accent-ink: #4a2bd0;
+
+  /* Status */
+  --danger: #d4383b;
+  --danger-soft: #fdecec;
+  --success: #188a55;
+  --success-soft: #e6f6ee;
+  --warning: #a86a0c;
+  --warning-soft: #fff4e0;
+  --info-soft: #eaf2ff;
+
+  /* Checkerboard for transparency */
+  --checker-a: #ffffff;
+  --checker-b: #e4e6eb;
+
+  /* Shape */
+  --r-xs: 4px;
+  --r-sm: 6px;
+  --r-md: 8px;
+  --r-lg: 12px;
+  --r-xl: 16px;
+  --r-full: 999px;
+
+  --shadow-sm: 0 1px 2px rgba(16, 20, 33, 0.06), 0 1px 1px rgba(16, 20, 33, 0.04);
+  --shadow-md: 0 4px 12px rgba(16, 20, 33, 0.08), 0 1px 3px rgba(16, 20, 33, 0.06);
+  --shadow-lg: 0 18px 48px rgba(16, 20, 33, 0.16), 0 4px 12px rgba(16, 20, 33, 0.08);
+  --focus-ring: 0 0 0 2px var(--surface), 0 0 0 4px var(--accent);
+
+  /* Type */
+  --font-ui: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --fs-xs: 11px;
+  --fs-sm: 12px;
+  --fs-md: 13px;
+  --fs-lg: 15px;
+  --fs-xl: 18px;
+  --fs-2xl: 24px;
+  --fs-3xl: 32px;
+
+  /* Layout */
+  --topbar-h: 56px;
+  --rail-w: 72px;
+  --flyout-w: 328px;
+  --props-w: 288px;
+  --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    color-scheme: dark;
+    --bg: #121317;
+    --surface: #1b1c21;
+    --surface-2: #202227;
+    --surface-3: #282a31;
+    --surface-hover: #25272e;
+    --surface-active: #2e3139;
+    --canvas-bg: #0d0e11;
+    --overlay: rgba(0, 0, 0, 0.6);
+    --border: #2d3038;
+    --border-strong: #3d414b;
+    --text: #eceef3;
+    --text-2: #a6acb9;
+    --text-3: #747b8a;
+    --text-inverse: #121317;
+    --accent: #8a70ff;
+    --accent-hover: #9b84ff;
+    --accent-active: #ac98ff;
+    --accent-soft: rgba(138, 112, 255, 0.16);
+    --accent-soft-2: rgba(138, 112, 255, 0.28);
+    --accent-text: #ffffff;
+    --accent-ink: #c2b4ff;
+    --danger: #ff6b6b;
+    --danger-soft: rgba(255, 107, 107, 0.14);
+    --success: #4cd38f;
+    --success-soft: rgba(76, 211, 143, 0.14);
+    --warning: #f2b35a;
+    --warning-soft: rgba(242, 179, 90, 0.14);
+    --info-soft: rgba(110, 160, 255, 0.14);
+    --checker-a: #2a2c33;
+    --checker-b: #1f2126;
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --shadow-md: 0 4px 14px rgba(0, 0, 0, 0.45);
+    --shadow-lg: 0 18px 48px rgba(0, 0, 0, 0.55);
+  }
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --bg: #121317;
+  --surface: #1b1c21;
+  --surface-2: #202227;
+  --surface-3: #282a31;
+  --surface-hover: #25272e;
+  --surface-active: #2e3139;
+  --canvas-bg: #0d0e11;
+  --overlay: rgba(0, 0, 0, 0.6);
+  --border: #2d3038;
+  --border-strong: #3d414b;
+  --text: #eceef3;
+  --text-2: #a6acb9;
+  --text-3: #747b8a;
+  --text-inverse: #121317;
+  --accent: #8a70ff;
+  --accent-hover: #9b84ff;
+  --accent-active: #ac98ff;
+  --accent-soft: rgba(138, 112, 255, 0.16);
+  --accent-soft-2: rgba(138, 112, 255, 0.28);
+  --accent-ink: #c2b4ff;
+  --danger: #ff6b6b;
+  --danger-soft: rgba(255, 107, 107, 0.14);
+  --success: #4cd38f;
+  --success-soft: rgba(76, 211, 143, 0.14);
+  --warning: #f2b35a;
+  --warning-soft: rgba(242, 179, 90, 0.14);
+  --info-soft: rgba(110, 160, 255, 0.14);
+  --checker-a: #2a2c33;
+  --checker-b: #1f2126;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 4px 14px rgba(0, 0, 0, 0.45);
+  --shadow-lg: 0 18px 48px rgba(0, 0, 0, 0.55);
+}

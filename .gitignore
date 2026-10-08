@@ -7,3 +7,5 @@ test-results
 playwright-report
 apps/server/uploads
 .DS_Store
+data/
+apps/server/data/

@@ -1,0 +1,55 @@
+# Plakat + PostgreSQL.  Usage:
+#   cp .env.example .env   # optional: set POSTGRES_PASSWORD, PUBLIC_URL, Openverse keys
+#   docker compose up -d --build
+#   open http://localhost:8787
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: plakat
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-plakat}
+      POSTGRES_DB: plakat
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U plakat -d plakat"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: plakat:latest
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      # POSTGRES_PASSWORD must be URL-safe (or percent-encoded) because it is embedded here.
+      DATABASE_URL: postgres://plakat:${POSTGRES_PASSWORD:-plakat}@db:5432/plakat
+      PORT: "8787"
+      HOST: 0.0.0.0
+      DATA_DIR: /data
+      UPLOAD_DIR: /data/uploads
+      PUBLIC_URL: ${PUBLIC_URL:-}
+      OPENVERSE_CLIENT_ID: ${OPENVERSE_CLIENT_ID:-}
+      OPENVERSE_CLIENT_SECRET: ${OPENVERSE_CLIENT_SECRET:-}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    ports:
+      - "${PLAKAT_PORT:-8787}:8787"
+    volumes:
+      - plakat-data:/data
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8787/api/health').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+volumes:
+  pgdata:
+  plakat-data:

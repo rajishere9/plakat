@@ -109,8 +109,9 @@ Do not create or update a text node until its font is ready. Konva measures text
 The browser barrier works as follows:
 
 1. Run `collectFonts(doc)` over the pages being rendered (the elements, not `doc.fonts`) for the stylesheets, and `fontLoadRequests(doc, { pageIds })` for the load work list.
-2. For each family, inject `<link rel="stylesheet" href="${googleFontsCssUrl(font)}">` once per family, using `display=block`. The URL only asks for variants the family has (`requestedFontVariants`, schema §9). If the stylesheet fails (css2 answers 400 when any variant is missing, possible only for uncatalogued families), retry once per variant with `googleFontVariantCssUrl` and record which variants failed.
+2. For each family, inject `<link rel="stylesheet" href="${canonicalFontCssUrl(font)}">` once per family, using `display=block`. For a catalogued family the URL always asks for **every** variant Google serves for it, whatever the document uses, so the page holds exactly one set of `@font-face` rules per family. For an uncatalogued family it is `googleFontsCssUrl(font)`, which asks only for the variants in use (`requestedFontVariants`, schema §9). If the stylesheet fails (css2 answers 400 when any variant is missing, possible only for uncatalogued families), retry once per variant with `googleFontVariantCssUrl` and record which variants failed.
 3. For every request, await `document.fonts.load(req.query, req.text)`, then assert `document.fonts.check(req.query, req.text)`. **Pass `req.text`**: Google Fonts splits families into `unicode-range` subsets and the browser loads only the subsets that intersect the text; the default text (a space) would load latin only, and Polish, Turkish, Cyrillic, Greek or Vietnamese glyphs would render and measure in a fallback font.
+   **P-13** Every font stylesheet on the page goes through this one canonical URL and the shared `loadFontStylesheet` (the font picker's previews too). *Rationale:* found by the §6.2 e2e test. When different variant sets were requested per document, page or export, a second stylesheet added duplicate `@font-face` rules for faces already in use. Text laid out before them was measured with one face and drawn with the other, so centered italic text moved by a sub-pixel amount and the editor snapshot no longer matched the export.
 4. Use a 15 s overall timeout. On timeout or failure, throw `FontLoadError` with the list of missing variants. The editor shows a warning and renders with fallback fonts. **Export refuses** unless `allowFallbackFonts: true`. *Rationale:* a silent fallback produces a "valid" file that looks wrong.
 
 **Late fonts and new subsets (editor).** When the user picks a font, or commits text that contains characters not in the `text` of the request already satisfied for that face, run the barrier for the affected requests, then call `scene.update(doc, { rebuildText: affectedIds })`. The text nodes are **destroyed and rebuilt** through the fresh-build path. Re-setting the same attributes does nothing: Konva's `Node._setAttr` returns early on an unchanged value, so no `*Change` event fires and `Text._setTextData` never re-measures, which would keep fallback-font line breaks that the export (a fresh build after the barrier) does not have.
@@ -121,12 +122,12 @@ In Node tests, fonts are registered with `registerFont(file, { family, weight, s
 
 `loadImage` creates `new Image()`, sets `img.crossOrigin = 'anonymous'` **before** setting `src`, then sets `src` and awaits `img.decode()`. It asserts `naturalWidth > 0`.
 
-- **Declared vs decoded size** (schema D-19). Crops and layout are defined in `asset.width × asset.height`. The renderer always calls `computeImageLayout(el, asset, { width: img.width, height: img.height })`, which scales the crop to the decoded bitmap, so a different-resolution rendition samples the same region. If `compareDecodedSize(asset, decoded).aspectMismatch` (> 1 %, typically an un-baked EXIF rotation), log a warning naming the asset; the upload server bakes orientation so this should never happen for uploads. Browsers apply EXIF orientation and node-canvas does not, which is one more reason the server bakes it.
+- **Declared vs decoded size** (schema D-19). Crops and layout are defined in `asset.width × asset.height`. The renderer always calls `computeImageLayout(el, asset, { width: img.width, height: img.height })`, which scales the crop to the decoded bitmap, so a different-resolution rendition samples the same region. If `compareDecodedSize(asset, decoded).aspectMismatch` (> 1 %, typically an un-baked EXIF rotation), log a warning naming the asset; the web client bakes orientation before upload (`normalizeUploadFile`: decode with `imageOrientation: 'from-image'`, re-encode), so this should never happen for uploads. Browsers apply EXIF orientation and node-canvas does not, which is one more reason to bake it.
 - **SVG** is rasterized once to an offscreen canvas of exactly `asset.width × asset.height` (or that times the largest pixel ratio in use) and that canvas is the `DecodedImage`, so decoded and declared spaces agree. Browsers invent 300 × 150 for SVGs without an intrinsic size.
 - Cache decoded images by `src`.
 - On failure, throw `AssetLoadError(assetId)`. The editor draws a placeholder (a checkerboard rect) for missing assets. Export refuses.
 
-**P-4** All non-`data:` image sources must be same-origin or CORS-enabled. Uploads are served by the Plakat server, which is same-origin. Third-party provider URLs (Openverse) are loaded through the server proxy `GET /api/assets/proxy?url=…`, which re-serves the image with `Access-Control-Allow-Origin`. *Rationale:* one tainted image makes `toBlob` throw a `SecurityError`, and that would surface only at export time.
+**P-4** All non-`data:` image sources must be same-origin or CORS-enabled. Uploads are served by the Plakat server, which is same-origin. Third-party provider images (Openverse) are never drawn from their remote URL: `POST /api/asset-providers/:id/import` downloads the full image into the server's uploads, so the editor only ever draws same-origin `/uploads/…` images. (An earlier draft planned a `GET /api/assets/proxy?url=…` route; it was not built, because a proxy that fetches client-supplied URLs is an SSRF risk and the import route covers the need. Remote thumbnails in the search panel are plain `<img>` tags and never reach a canvas.) *Rationale:* one tainted image makes `toBlob` throw a `SecurityError`, and that would surface only at export time.
 
 ### 3.3 Text
 
@@ -290,6 +291,8 @@ Open each fixture in the editor. Set zoom to 100% and wait for `window.__plakat.
 2. Download JPG, PDF and multi-page ZIP, and assert the dimensions, page count and PDF page size and orientation in pt, including the YouTube thumbnail and both business cards (landscape).
 3. Run in Chromium (required) and WebKit and Firefox (best effort).
 
+**Implementation.** The specs are in `e2e/` and run with `npm run test:e2e`. That command builds the web app, and `playwright.config.ts` starts `e2e/server.mjs`: the real server serving `apps/web/dist` through `WEB_DIST`, with an in-memory PGlite database and a temporary upload directory. `parity.spec.ts` covers item 1 at devicePixelRatio 1 and 2. It opens the two-page café menu template at 37 % zoom, wheel-scrolls to page 2, and compares at 1x and 2x, checking both pixelmatch and raw RGBA bytes. `export-dimensions.spec.ts` covers item 2: PNG and JPG at every scale for the Instagram post, YouTube thumbnail and A4; PDF for YouTube and A4; and multi-page ZIP and PDF exports. `image-upload.spec.ts` repeats the parity check on an uploaded image after crop and filters. The suite currently runs in Chromium only.
+
 The fixtures use real Google Fonts in this test, which is acceptable because the editor and the export run in the **same** browser.
 
 ## 7. Pitfalls
@@ -311,7 +314,7 @@ The fixtures use real Google Fonts in this test, which is acceptable because the
 | **Filter cache at the wrong ratio**, which blurs images and changes blur strength. | P-7: pass `pixelRatio` explicitly and re-cache on ratio change. |
 | **CSS vs function filters** take different code paths. | P-6: function filters only. |
 | **Image smoothing.** | Leave Konva's defaults (`imageSmoothingEnabled: true`, browser-default quality) in **both** paths. Never set `imageSmoothingQuality` in only one path. Large downscales may alias, identically in both; mip-mapped pre-scaling, if added later, must be keyed by effective ratio and shared by both paths. |
-| **CORS taint**: `toBlob` throws `SecurityError`. | P-4: `crossOrigin='anonymous'` is set before `src`, and third-party images go through the server proxy. Catch `SecurityError` and report the offending asset. |
+| **CORS taint**: `toBlob` throws `SecurityError`. | P-4: `crossOrigin='anonymous'` is set before `src`, and third-party images are imported into the server's uploads first. Catch `SecurityError` and report the offending asset. |
 | **Opacity on fill+stroke shapes.** Konva uses a buffer canvas (`_useBufferCanvas`). | Same code in both paths. Never set `perfectDrawEnabled: false` in only one path; leave it at its default everywhere. |
 | **Canvas size limits** (Safari 16.7 MP). | `checkCanvasLimits` before allocating (§4). |
 | **Memory** on multi-page print exports. | Process pages sequentially, destroy each stage, and call `Konva.Util.releaseCanvas`. |
@@ -325,7 +328,7 @@ The fixtures use real Google Fonts in this test, which is acceptable because the
 | P-1 | One imperative scene builder shared by the editor and the export; no react-konva for content. |
 | P-2 | The scene builder runs under Node for tests. |
 | P-3 | Editor UI never mutates content nodes; chrome lives on its own layer. |
-| P-4 | Images must be CORS-clean; third-party images go through the server proxy. |
+| P-4 | Images must be CORS-clean; third-party images are imported into the server's uploads (no proxy). |
 | P-5 | Text vertical alignment is computed; text nodes never get a fixed height. |
 | P-6 | Konva function filters only. |
 | P-7 | Filter cache `pixelRatio` equals the effective output ratio, is always explicit, and is padded (`offset`) against truncation. |
@@ -334,3 +337,4 @@ The fixtures use real Google Fonts in this test, which is acceptable because the
 | P-10 | PDF is a raster at print DPI; vector PDF is future work. |
 | P-11 | Multi-page PNG/JPG export as a STORE ZIP written in-repo. |
 | P-12 | Page roots stay at the origin; zoom/pan on the stage, offsets on page frames; raster in root-local space. |
+| P-13 | One canonical Google Fonts stylesheet per family (all catalogued variants), loaded once per page through `loadFontStylesheet`, font-picker previews included. |

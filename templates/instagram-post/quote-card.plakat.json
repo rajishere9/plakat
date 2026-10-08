@@ -1,0 +1,320 @@
+{
+  "format": "plakat.document",
+  "schemaVersion": 1,
+  "kind": "template",
+  "id": "tpl_instagram-post_quote-card",
+  "meta": {
+    "title": "Quote card",
+    "description": "Editorial quote card with a large serif quotation and an accent color.",
+    "tags": [
+      "quote",
+      "editorial",
+      "minimal",
+      "instagram"
+    ],
+    "createdAt": "2026-10-08T00:00:00.000Z",
+    "updatedAt": "2026-10-08T00:00:00.000Z",
+    "sourceTemplateId": null
+  },
+  "size": {
+    "width": 1080,
+    "height": 1080,
+    "presetId": "instagram-post",
+    "physical": null
+  },
+  "pages": [
+    {
+      "id": "pg_quote",
+      "name": "Quote",
+      "background": {
+        "color": "#f4eee4",
+        "image": null
+      },
+      "elements": [
+        {
+          "id": "el_halo",
+          "name": "Halo",
+          "x": 64,
+          "y": 70,
+          "width": 240,
+          "height": 240,
+          "rotation": 0,
+          "opacity": 1,
+          "locked": true,
+          "hidden": false,
+          "groupId": null,
+          "type": "shape",
+          "shape": "ellipse",
+          "fill": "#eadfcd",
+          "stroke": null,
+          "strokeWidth": 0,
+          "dash": [],
+          "cornerRadius": 0,
+          "sides": 5,
+          "innerRadius": 0.5
+        },
+        {
+          "id": "el_corner",
+          "name": "Corner circle",
+          "x": 820,
+          "y": 820,
+          "width": 420,
+          "height": 420,
+          "rotation": 0,
+          "opacity": 1,
+          "locked": true,
+          "hidden": false,
+          "groupId": null,
+          "type": "shape",
+          "shape": "ellipse",
+          "fill": "#eadfcd",
+          "stroke": null,
+          "strokeWidth": 0,
+          "dash": [],
+          "cornerRadius": 0,
+          "sides": 5,
+          "innerRadius": 0.5
+        },
+        {
+          "id": "el_frame",
+          "name": "Frame",
+          "x": 48,
+          "y": 48,
+          "width": 984,
+          "height": 984,
+          "rotation": 0,
+          "opacity": 1,
+          "locked": true,
+          "hidden": false,
+          "groupId": null,
+          "type": "shape",
+          "shape": "rect",
+          "fill": null,
+          "stroke": "#1f2a2e",
+          "strokeWidth": 2,
+          "dash": [],
+          "cornerRadius": 0,
+          "sides": 5,
+          "innerRadius": 0.5
+        },
+        {
+          "id": "el_mark",
+          "name": "Quotation mark",
+          "x": 104,
+          "y": 40,
+          "width": 300,
+          "height": 300,
+          "rotation": 0,
+          "opacity": 1,
+          "locked": false,
+          "hidden": false,
+          "groupId": null,
+          "type": "text",
+          "content": "“",
+          "fontFamily": "Playfair Display",
+          "fontWeight": 900,
+          "fontStyle": "normal",
+          "fontSize": 360,
+          "lineHeight": 1,
+          "letterSpacing": 0,
+          "align": "left",
+          "verticalAlign": "top",
+          "fill": "#d9623b",
+          "textDecoration": "none",
+          "textTransform": "none"
+        },
+        {
+          "id": "el_quote",
+          "name": "Quote",
+          "x": 112,
+          "y": 320,
+          "width": 856,
+          "height": 420,
+          "rotation": 0,
+          "opacity": 1,
+          "locked": false,
+          "hidden": false,
+          "groupId": null,
+          "type": "text",
+          "content": "Small steps every day add up to a life you are proud of. Start where you are.",
+          "fontFamily": "Playfair Display",
+          "fontWeight": 500,
+          "fontStyle": "italic",
+          "fontSize": 64,
+          "lineHeight": 1.2,
+          "letterSpacing": -0.01,
+          "align": "left",
+          "verticalAlign": "middle",
+          "fill": "#1f2a2e",
+          "textDecoration": "none",
+          "textTransform": "none"
+        },
+        {
+          "id": "el_rule",
+          "name": "Accent rule",
+          "x": 112,
+          "y": 800,
+          "width": 72,
+          "height": 6,
+          "rotation": 0,
+          "opacity": 1,
+          "locked": false,
+          "hidden": false,
+          "groupId": null,
+          "type": "shape",
+          "shape": "rect",
+          "fill": "#d9623b",
+          "stroke": null,
+          "strokeWidth": 0,
+          "dash": [],
+          "cornerRadius": 0,
+          "sides": 5,
+          "innerRadius": 0.5
+        },
+        {
+          "id": "el_author",
+          "name": "Author",
+          "x": 112,
+          "y": 836,
+          "width": 760,
+          "height": 36,
+          "rotation": 0,
+          "opacity": 1,
+          "locked": false,
+          "hidden": false,
+          "groupId": null,
+          "type": "text",
+          "content": "Maya Ellison",
+          "fontFamily": "Montserrat",
+          "fontWeight": 700,
+          "fontStyle": "normal",
+          "fontSize": 30,
+          "lineHeight": 1.2,
+          "letterSpacing": 0.14,
+          "align": "left",
+          "verticalAlign": "top",
+          "fill": "#1f2a2e",
+          "textDecoration": "none",
+          "textTransform": "uppercase"
+        },
+        {
+          "id": "el_source",
+          "name": "Source",
+          "x": 112,
+          "y": 882,
+          "width": 760,
+          "height": 29,
+          "rotation": 0,
+          "opacity": 1,
+          "locked": false,
+          "hidden": false,
+          "groupId": null,
+          "type": "text",
+          "content": "Author of Slow Mornings",
+          "fontFamily": "Montserrat",
+          "fontWeight": 400,
+          "fontStyle": "normal",
+          "fontSize": 24,
+          "lineHeight": 1.2,
+          "letterSpacing": 0.02,
+          "align": "left",
+          "verticalAlign": "top",
+          "fill": "#6b6f6a",
+          "textDecoration": "none",
+          "textTransform": "none"
+        }
+      ]
+    }
+  ],
+  "assets": {},
+  "fonts": [
+    {
+      "family": "Playfair Display",
+      "source": "google",
+      "variants": [
+        {
+          "weight": 900,
+          "style": "normal"
+        },
+        {
+          "weight": 500,
+          "style": "italic"
+        }
+      ]
+    },
+    {
+      "family": "Montserrat",
+      "source": "google",
+      "variants": [
+        {
+          "weight": 400,
+          "style": "normal"
+        },
+        {
+          "weight": 700,
+          "style": "normal"
+        }
+      ]
+    }
+  ],
+  "template": {
+    "category": "instagram-post",
+    "slots": [
+      {
+        "id": "slot_quote",
+        "label": "Quote",
+        "description": "Up to about 120 characters reads best.",
+        "required": true,
+        "targets": [
+          "el_quote"
+        ],
+        "kind": "text",
+        "maxLength": 120,
+        "multiline": true
+      },
+      {
+        "id": "slot_author",
+        "label": "Author",
+        "description": "",
+        "required": true,
+        "targets": [
+          "el_author"
+        ],
+        "kind": "text",
+        "maxLength": 32,
+        "multiline": false
+      },
+      {
+        "id": "slot_source",
+        "label": "Role or source",
+        "description": "Job title, book or @handle.",
+        "required": false,
+        "targets": [
+          "el_source"
+        ],
+        "kind": "text",
+        "maxLength": 48,
+        "multiline": false
+      },
+      {
+        "id": "slot_accent",
+        "label": "Accent color",
+        "description": "",
+        "required": false,
+        "targets": [
+          "el_mark",
+          "el_rule"
+        ],
+        "kind": "color",
+        "property": "fill",
+        "palette": [
+          "#d9623b",
+          "#2f6f62",
+          "#3b5bdb",
+          "#b5306b",
+          "#1f2a2e"
+        ]
+      }
+    ]
+  }
+}

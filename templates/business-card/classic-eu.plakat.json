@@ -1,0 +1,556 @@
+{
+  "format": "plakat.document",
+  "schemaVersion": 1,
+  "kind": "template",
+  "id": "tpl_business-card_classic-eu",
+  "meta": {
+    "title": "Classic business card (EU)",
+    "description": "Elegant two-sided EU business card: forest-green front with a centered mark, cream back with serif name.",
+    "tags": [
+      "business card",
+      "print",
+      "elegant",
+      "architecture",
+      "contact"
+    ],
+    "createdAt": "2026-10-08T00:00:00.000Z",
+    "updatedAt": "2026-10-08T00:00:00.000Z",
+    "sourceTemplateId": null
+  },
+  "size": {
+    "width": 321.2598425196851,
+    "height": 207.87401574803152,
+    "presetId": "business-card-eu",
+    "physical": {
+      "width": 85,
+      "height": 55,
+      "unit": "mm"
+    }
+  },
+  "pages": [
+    {
+      "id": "pg_front",
+      "name": "Front",
+      "background": {
+        "color": "#1f3d36",
+        "image": null
+      },
+      "elements": [
+        {
+          "id": "el_frame",
+          "name": "Frame",
+          "x": 10,
+          "y": 10,
+          "width": 301.2598425196851,
+          "height": 187.87401574803152,
+          "rotation": 0,
+          "opacity": 1,
+          "locked": false,
+          "hidden": false,
+          "groupId": null,
+          "type": "shape",
+          "shape": "rect",
+          "fill": null,
+          "stroke": "#c8a96a",
+          "strokeWidth": 0.75,
+          "dash": [],
+          "cornerRadius": 0,
+          "sides": 5,
+          "innerRadius": 0.5
+        },
+        {
+          "id": "el_logo",
+          "name": "Logo",
+          "x": 140.62992125984255,
+          "y": 40,
+          "width": 40,
+          "height": 40,
+          "rotation": 0,
+          "opacity": 1,
+          "locked": false,
+          "hidden": false,
+          "groupId": null,
+          "type": "image",
+          "assetId": "as_logo_light",
+          "crop": null,
+          "objectFit": "contain",
+          "flipX": false,
+          "flipY": false,
+          "cornerRadius": 0,
+          "filters": {
+            "brightness": 0,
+            "contrast": 0,
+            "saturation": 0,
+            "blur": 0,
+            "grayscale": false,
+            "sepia": false,
+            "invert": false
+          }
+        },
+        {
+          "id": "el_company",
+          "name": "Company",
+          "x": 20,
+          "y": 96,
+          "width": 281.2598425196851,
+          "height": 37,
+          "rotation": 0,
+          "opacity": 1,
+          "locked": false,
+          "hidden": false,
+          "groupId": null,
+          "type": "text",
+          "content": "Studio Fern",
+          "fontFamily": "Cormorant Garamond",
+          "fontWeight": 600,
+          "fontStyle": "normal",
+          "fontSize": 32,
+          "lineHeight": 1.15,
+          "letterSpacing": 0,
+          "align": "center",
+          "verticalAlign": "top",
+          "fill": "#f1ead8",
+          "textDecoration": "none",
+          "textTransform": "none"
+        },
+        {
+          "id": "el_tagline",
+          "name": "Tagline",
+          "x": 20,
+          "y": 140,
+          "width": 281.2598425196851,
+          "height": 9,
+          "rotation": 0,
+          "opacity": 1,
+          "locked": false,
+          "hidden": false,
+          "groupId": null,
+          "type": "text",
+          "content": "Architecture & Interiors",
+          "fontFamily": "Montserrat",
+          "fontWeight": 500,
+          "fontStyle": "normal",
+          "fontSize": 7.5,
+          "lineHeight": 1.2,
+          "letterSpacing": 0.32,
+          "align": "center",
+          "verticalAlign": "top",
+          "fill": "#c8a96a",
+          "textDecoration": "none",
+          "textTransform": "uppercase"
+        }
+      ]
+    },
+    {
+      "id": "pg_back",
+      "name": "Back",
+      "background": {
+        "color": "#f1ead8",
+        "image": null
+      },
+      "elements": [
+        {
+          "id": "el_bar",
+          "name": "Accent bar",
+          "x": 307.2598425196851,
+          "y": 0,
+          "width": 14,
+          "height": 207.87401574803152,
+          "rotation": 0,
+          "opacity": 1,
+          "locked": false,
+          "hidden": false,
+          "groupId": null,
+          "type": "shape",
+          "shape": "rect",
+          "fill": "#c8a96a",
+          "stroke": null,
+          "strokeWidth": 0,
+          "dash": [],
+          "cornerRadius": 0,
+          "sides": 5,
+          "innerRadius": 0.5
+        },
+        {
+          "id": "el_name",
+          "name": "Name",
+          "x": 24,
+          "y": 26,
+          "width": 250,
+          "height": 32,
+          "rotation": 0,
+          "opacity": 1,
+          "locked": false,
+          "hidden": false,
+          "groupId": null,
+          "type": "text",
+          "content": "Léa Fontaine",
+          "fontFamily": "Cormorant Garamond",
+          "fontWeight": 700,
+          "fontStyle": "normal",
+          "fontSize": 27,
+          "lineHeight": 1.15,
+          "letterSpacing": 0,
+          "align": "left",
+          "verticalAlign": "top",
+          "fill": "#1f3d36",
+          "textDecoration": "none",
+          "textTransform": "none"
+        },
+        {
+          "id": "el_role",
+          "name": "Role",
+          "x": 24,
+          "y": 60,
+          "width": 250,
+          "height": 9,
+          "rotation": 0,
+          "opacity": 1,
+          "locked": false,
+          "hidden": false,
+          "groupId": null,
+          "type": "text",
+          "content": "Principal Architect",
+          "fontFamily": "Montserrat",
+          "fontWeight": 600,
+          "fontStyle": "normal",
+          "fontSize": 7.5,
+          "lineHeight": 1.2,
+          "letterSpacing": 0.26,
+          "align": "left",
+          "verticalAlign": "top",
+          "fill": "#c8a96a",
+          "textDecoration": "none",
+          "textTransform": "uppercase"
+        },
+        {
+          "id": "el_rule",
+          "name": "Rule",
+          "x": 24,
+          "y": 84,
+          "width": 36,
+          "height": 1.5,
+          "rotation": 0,
+          "opacity": 1,
+          "locked": false,
+          "hidden": false,
+          "groupId": null,
+          "type": "shape",
+          "shape": "rect",
+          "fill": "#c8a96a",
+          "stroke": null,
+          "strokeWidth": 0,
+          "dash": [],
+          "cornerRadius": 0,
+          "sides": 5,
+          "innerRadius": 0.5
+        },
+        {
+          "id": "el_contact1",
+          "name": "Phone",
+          "x": 24,
+          "y": 102,
+          "width": 230,
+          "height": 13,
+          "rotation": 0,
+          "opacity": 1,
+          "locked": false,
+          "hidden": false,
+          "groupId": null,
+          "type": "text",
+          "content": "+33 6 12 34 56 78",
+          "fontFamily": "Montserrat",
+          "fontWeight": 400,
+          "fontStyle": "normal",
+          "fontSize": 8.5,
+          "lineHeight": 1.5,
+          "letterSpacing": 0.02,
+          "align": "left",
+          "verticalAlign": "top",
+          "fill": "#1f3d36",
+          "textDecoration": "none",
+          "textTransform": "none"
+        },
+        {
+          "id": "el_contact2",
+          "name": "Email",
+          "x": 24,
+          "y": 118,
+          "width": 230,
+          "height": 13,
+          "rotation": 0,
+          "opacity": 1,
+          "locked": false,
+          "hidden": false,
+          "groupId": null,
+          "type": "text",
+          "content": "lea@studiofern.fr",
+          "fontFamily": "Montserrat",
+          "fontWeight": 400,
+          "fontStyle": "normal",
+          "fontSize": 8.5,
+          "lineHeight": 1.5,
+          "letterSpacing": 0.02,
+          "align": "left",
+          "verticalAlign": "top",
+          "fill": "#1f3d36",
+          "textDecoration": "none",
+          "textTransform": "none"
+        },
+        {
+          "id": "el_contact3",
+          "name": "Website",
+          "x": 24,
+          "y": 134,
+          "width": 230,
+          "height": 13,
+          "rotation": 0,
+          "opacity": 1,
+          "locked": false,
+          "hidden": false,
+          "groupId": null,
+          "type": "text",
+          "content": "studiofern.fr",
+          "fontFamily": "Montserrat",
+          "fontWeight": 400,
+          "fontStyle": "normal",
+          "fontSize": 8.5,
+          "lineHeight": 1.5,
+          "letterSpacing": 0.02,
+          "align": "left",
+          "verticalAlign": "top",
+          "fill": "#1f3d36",
+          "textDecoration": "none",
+          "textTransform": "none"
+        },
+        {
+          "id": "el_contact4",
+          "name": "Address",
+          "x": 24,
+          "y": 150,
+          "width": 230,
+          "height": 13,
+          "rotation": 0,
+          "opacity": 1,
+          "locked": false,
+          "hidden": false,
+          "groupId": null,
+          "type": "text",
+          "content": "8 Quai de la Tournelle, Paris",
+          "fontFamily": "Montserrat",
+          "fontWeight": 400,
+          "fontStyle": "normal",
+          "fontSize": 8.5,
+          "lineHeight": 1.5,
+          "letterSpacing": 0.02,
+          "align": "left",
+          "verticalAlign": "top",
+          "fill": "#1f3d36",
+          "textDecoration": "none",
+          "textTransform": "none"
+        }
+      ]
+    }
+  ],
+  "assets": {
+    "as_logo_light": {
+      "type": "image",
+      "mimeType": "image/png",
+      "width": 256,
+      "height": 256,
+      "src": "data:image/png;base64,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",
+      "name": "Placeholder logo (light)",
+      "source": {
+        "provider": "plakat-templates",
+        "externalId": null,
+        "pageUrl": null,
+        "author": "Plakat contributors",
+        "license": "CC0-1.0",
+        "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+        "attribution": "Placeholder artwork by Plakat contributors (CC0 1.0)"
+      }
+    }
+  },
+  "fonts": [
+    {
+      "family": "Cormorant Garamond",
+      "source": "google",
+      "variants": [
+        {
+          "weight": 600,
+          "style": "normal"
+        },
+        {
+          "weight": 700,
+          "style": "normal"
+        }
+      ]
+    },
+    {
+      "family": "Montserrat",
+      "source": "google",
+      "variants": [
+        {
+          "weight": 400,
+          "style": "normal"
+        },
+        {
+          "weight": 500,
+          "style": "normal"
+        },
+        {
+          "weight": 600,
+          "style": "normal"
+        }
+      ]
+    }
+  ],
+  "template": {
+    "category": "business-card",
+    "slots": [
+      {
+        "id": "slot_name",
+        "label": "Full name",
+        "description": "",
+        "required": true,
+        "targets": [
+          "el_name"
+        ],
+        "kind": "text",
+        "maxLength": 22,
+        "multiline": false
+      },
+      {
+        "id": "slot_role",
+        "label": "Role",
+        "description": "",
+        "required": false,
+        "targets": [
+          "el_role"
+        ],
+        "kind": "text",
+        "maxLength": 32,
+        "multiline": false
+      },
+      {
+        "id": "slot_company",
+        "label": "Company",
+        "description": "",
+        "required": true,
+        "targets": [
+          "el_company"
+        ],
+        "kind": "text",
+        "maxLength": 18,
+        "multiline": false
+      },
+      {
+        "id": "slot_tagline",
+        "label": "Tagline",
+        "description": "",
+        "required": false,
+        "targets": [
+          "el_tagline"
+        ],
+        "kind": "text",
+        "maxLength": 34,
+        "multiline": false
+      },
+      {
+        "id": "slot_logo",
+        "label": "Logo",
+        "description": "Light logo on a transparent background (PNG or SVG).",
+        "required": false,
+        "targets": [
+          "el_logo"
+        ],
+        "kind": "image",
+        "fit": "contain"
+      },
+      {
+        "id": "slot_phone",
+        "label": "Phone",
+        "description": "",
+        "required": false,
+        "targets": [
+          "el_contact1"
+        ],
+        "kind": "text",
+        "maxLength": 28,
+        "multiline": false
+      },
+      {
+        "id": "slot_email",
+        "label": "Email",
+        "description": "",
+        "required": false,
+        "targets": [
+          "el_contact2"
+        ],
+        "kind": "text",
+        "maxLength": 34,
+        "multiline": false
+      },
+      {
+        "id": "slot_website",
+        "label": "Website",
+        "description": "",
+        "required": false,
+        "targets": [
+          "el_contact3"
+        ],
+        "kind": "text",
+        "maxLength": 34,
+        "multiline": false
+      },
+      {
+        "id": "slot_address",
+        "label": "Address",
+        "description": "",
+        "required": false,
+        "targets": [
+          "el_contact4"
+        ],
+        "kind": "text",
+        "maxLength": 40,
+        "multiline": false
+      },
+      {
+        "id": "slot_accent",
+        "label": "Accent color",
+        "description": "",
+        "required": false,
+        "targets": [
+          "el_tagline",
+          "el_bar",
+          "el_role",
+          "el_rule"
+        ],
+        "kind": "color",
+        "property": "fill",
+        "palette": [
+          "#c8a96a",
+          "#d08c60",
+          "#9fb8ad",
+          "#e2c2b3"
+        ]
+      },
+      {
+        "id": "slot_frame",
+        "label": "Frame color",
+        "description": "",
+        "required": false,
+        "targets": [
+          "el_frame"
+        ],
+        "kind": "color",
+        "property": "stroke",
+        "palette": [
+          "#c8a96a",
+          "#f1ead8",
+          "#9fb8ad"
+        ]
+      }
+    ]
+  }
+}
