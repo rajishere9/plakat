@@ -174,6 +174,11 @@ describe('createBrowserEnv', () => {
     const s = await env.loadImage(svg.src, svg, 'as_svg');
     expect([s.width, s.height]).toEqual([480, 320]);
     expect(fake.canvases[0]!.draws[0]!.slice(1)).toEqual([0, 0, 480, 320]);
+    // the scale prepareResources asks for (how large the document draws the SVG)
+    const big = await env.loadImage(svg.src, svg, 'as_svg', { svgRasterScale: 8 });
+    expect([big.width, big.height]).toEqual([960, 640]);
+    expect(big).not.toBe(s);
+    expect(await env.loadImage(svg.src, svg, 'as_svg', { svgRasterScale: 8 })).toBe(big);
   });
 
   it('detects WebKit for the Safari canvas limit', () => {

@@ -76,8 +76,11 @@ export function renderPageWithResources(
   opts: { env?: RenderEnv; canvasLimits?: CanvasLimits } = {},
 ): RenderedPage {
   const dims = exportPixelSize(doc.size, scale);
-  assertCanvasFits(doc, scale, limitsFor(opts.env, opts.canvasLimits));
-  const scene = new PageScene({ doc, pageId, resources, pixelRatio: dims.pixelRatio });
+  const limits = limitsFor(opts.env, opts.canvasLimits);
+  assertCanvasFits(doc, scale, limits);
+  // Filter caches beyond the canvas limits throw CanvasLimitError instead of producing a
+  // file whose filtered image silently failed to render (planFilterCache).
+  const scene = new PageScene({ doc, pageId, resources, pixelRatio: dims.pixelRatio, canvasLimits: limits, filterCacheOverflow: 'error' });
   const container = stageContainer(opts.env);
   const stage = new Konva.Stage({ ...(container ? { container } : {}), width: 1, height: 1, listening: false } as ConstructorParameters<typeof Konva.Stage>[0]);
   const layer = new Konva.Layer({ listening: false });

@@ -7,6 +7,7 @@ import { detectPlatform } from '../lib/shortcuts.ts';
 import { createEditorStore, type EditorStore } from '../store/editor-store.ts';
 import type { WorkspaceController } from './controller.ts';
 import { thumbnailScale } from './render-env.ts';
+import { LIVE_COMMIT_MS, wordAt } from './TextEditor.tsx';
 import { Workspace } from './Workspace.tsx';
 
 const env: RenderEnv = {
@@ -108,6 +109,65 @@ describe('<Workspace>', () => {
     fireEvent.keyDown(ta, { key: 'Escape' });
     expect(store.getState().textEditingId).toBeNull();
     expect((store.getState().document.pages[0]!.elements[0] as TextElement).content).toBe('Hello');
+  });
+
+  it('inline text editing commits the draft while typing (one undo step) and before unload', async () => {
+    const { store } = await mount();
+    act(() => store.getState().actions.startTextEditing('t1'));
+    const ta = document.querySelector('textarea[data-plakat-text-editor]') as HTMLTextAreaElement;
+    const content = () => (store.getState().document.pages[0]!.elements[0] as TextElement).content;
+    vi.useFakeTimers();
+    try {
+      fireEvent.change(ta, { target: { value: 'Important' } });
+      expect(content()).toBe('Hello');
+      act(() => void vi.advanceTimersByTime(LIVE_COMMIT_MS));
+      expect(content()).toBe('Important');
+      expect(store.getState().textEditingId).toBe('t1');
+      fireEvent.change(ta, { target: { value: 'Important headline' } });
+      act(() => void vi.advanceTimersByTime(LIVE_COMMIT_MS));
+      expect(content()).toBe('Important headline');
+    } finally {
+      vi.useRealTimers();
+    }
+    // Reload/close before the debounce fires: beforeunload commits the draft first.
+    fireEvent.change(ta, { target: { value: 'Important headline!' } });
+    window.dispatchEvent(new Event('beforeunload'));
+    expect(content()).toBe('Important headline!');
+    act(() => store.getState().actions.stopTextEditing());
+    act(() => void store.getState().actions.undo());
+    expect(content()).toBe('Hello');
+  });
+
+  it('inline text editing: Escape reverts drafts that were already committed while typing', async () => {
+    const { store } = await mount();
+    act(() => store.getState().actions.startTextEditing('t1'));
+    const ta = document.querySelector('textarea[data-plakat-text-editor]') as HTMLTextAreaElement;
+    fireEvent.change(ta, { target: { value: 'Draft' } });
+    window.dispatchEvent(new Event('pagehide'));
+    expect((store.getState().document.pages[0]!.elements[0] as TextElement).content).toBe('Draft');
+    fireEvent.keyDown(ta, { key: 'Escape' });
+    expect(store.getState().textEditingId).toBeNull();
+    expect((store.getState().document.pages[0]!.elements[0] as TextElement).content).toBe('Hello');
+  });
+
+  it('T / Enter select all; a double-click places the caret instead', async () => {
+    const { store, controller } = await mount();
+    act(() => store.getState().actions.startTextEditing('t1'));
+    let ta = document.querySelector('textarea[data-plakat-text-editor]') as HTMLTextAreaElement;
+    expect([ta.selectionStart, ta.selectionEnd]).toEqual([0, 5]);
+    act(() => store.getState().actions.stopTextEditing());
+    const p = controller.pageToScreenPoint(store.getState().document.pages[0]!.id, { x: 60, y: 60 })!;
+    act(() => controller.doubleClick(p));
+    ta = document.querySelector('textarea[data-plakat-text-editor]') as HTMLTextAreaElement;
+    // jsdom cannot hit-test text: the caret goes to the end instead of selecting everything.
+    expect(ta.selectionStart).toBe(ta.selectionEnd);
+  });
+
+  it('wordAt finds the word around a caret offset', () => {
+    expect(wordAt('Fix one word', 5)).toEqual([4, 7]);
+    expect(wordAt('Fix one word', 7)).toEqual([4, 7]);
+    expect(wordAt('Fix  word', 4)).toBeNull();
+    expect(wordAt("don't stop", 2)).toEqual([0, 5]);
   });
 
   it('ending the edit by selecting something else commits the text', async () => {

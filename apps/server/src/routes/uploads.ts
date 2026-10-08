@@ -4,8 +4,13 @@ import type { FastifyInstance } from 'fastify';
 import type { AppContext } from '../context.ts';
 import { HttpError, notFound } from '../errors.ts';
 
-/** CSP for served SVGs: no scripts, no external loads; inline styles only. */
-export const SVG_CSP = "default-src 'none'; style-src 'unsafe-inline'";
+/**
+ * CSP for served SVGs: no scripts, no external loads; inline styles only. `form-action`
+ * and navigation do not fall back to default-src, so `sandbox` (unique origin, no forms,
+ * no scripts, no top navigation) stops an SVG opened directly from posing as a
+ * same-origin sign-in page. <img> rendering is unaffected.
+ */
+export const SVG_CSP = "default-src 'none'; style-src 'unsafe-inline'; form-action 'none'; frame-ancestors 'none'; sandbox";
 
 export function registerUploadRoutes(app: FastifyInstance, ctx: AppContext): void {
   const { uploads } = ctx;

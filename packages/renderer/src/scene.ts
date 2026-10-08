@@ -7,13 +7,14 @@ import {
   type Id,
   type ImageElement,
   type Page,
+  type CanvasLimits,
   type PageSize,
   type PlakatDocument,
   type PlakatElement,
   type ShapeElement,
   type TextElement,
 } from '@plakat/schema';
-import { applyFilterAttrs, syncFilterCache } from './filters.ts';
+import { applyFilterAttrs, syncFilterCache, type FilterCacheOverflow } from './filters.ts';
 import {
   Konva,
   type KonvaContext,
@@ -23,7 +24,7 @@ import {
   type KonvaShape,
   type KonvaText,
 } from './konva.ts';
-import { invalidateTextMeasurements, widestGraphemeWidth } from './text.ts';
+import { invalidateTextMeasurements, textLayoutAttrs, widestGraphemeWidth } from './text.ts';
 import type { DecodedImage, Resources } from './types.ts';
 
 // ---------------------------------------------------------------------------
@@ -58,6 +59,12 @@ export interface ApplyContext {
   resources: Resources;
   /** Effective output pixel ratio: filter caches are made at this ratio (P-7). */
   pixelRatio: number;
+  /** Page size: filter caches too large for the limits are cropped to the page (planFilterCache). */
+  page?: { width: number; height: number };
+  /** Canvas limits for filter caches (default platformCanvasLimits()). */
+  canvasLimits?: CanvasLimits;
+  /** 'clamp' (editor, default) or 'error' (export): see FilterCacheOptions. */
+  filterCacheOverflow?: FilterCacheOverflow;
 }
 
 function getAsset(assets: PlakatDocument['assets'], id: Id): Asset | undefined {
@@ -101,6 +108,11 @@ export function applyElement(group: KonvaGroup, el: PlakatElement, ctx: ApplyCon
     y: el.y,
     rotation: el.rotation,
     opacity: el.opacity,
+    // Text draws one primitive per line (or per grapheme) and lines/glyphs can overlap
+    // (tight lineHeight, negative letterSpacing). Without isolation Konva applies the
+    // opacity to each draw and overlaps come out darker; isolated, the finished text is
+    // composited once, like CSS opacity (§3.3). Shapes and images draw a single primitive.
+    isolated: el.type === 'text' && el.opacity < 1,
     visible: !el.hidden,
     scaleX: 1,
     scaleY: 1,
@@ -139,7 +151,8 @@ function replaceBody<T extends KonvaGroup | KonvaShape>(parent: KonvaGroup, inde
 function applyText(group: KonvaGroup, el: TextElement): void {
   const node = replaceBody<KonvaText>(group, 1, () => new Konva.Text({ text: '' }), (n) => n instanceof Konva.Text);
   const text = applyTextTransform(el.content, el.textTransform);
-  const letterSpacing = el.letterSpacing * el.fontSize;
+  // RTL scripts: explicit direction, and no per-grapheme drawing that would reverse them.
+  const { direction, align, letterSpacing } = textLayoutAttrs(text, el.align, el.letterSpacing * el.fontSize);
   node.setAttrs({
     x: 0,
     text,
@@ -149,9 +162,9 @@ function applyText(group: KonvaGroup, el: TextElement): void {
     fontSize: el.fontSize,
     lineHeight: el.lineHeight,
     letterSpacing,
-    align: el.align,
+    align,
     verticalAlign: 'top',
-    direction: 'inherit',
+    direction,
     fill: el.fill,
     textDecoration: el.textDecoration === 'none' ? '' : el.textDecoration,
     wrap: 'word',
@@ -202,6 +215,39 @@ function applyShape(group: KonvaGroup, el: ShapeElement): void {
   }
 }
 
+/**
+ * The page box (content-group space) mapped into an image node's local coordinates:
+ * the only part of the node that can ever be visible (D-7 clip). Bounding box of the
+ * inverse-mapped page corners, so rotation only makes it larger, never smaller.
+ */
+function pageRectInNode(node: KonvaImage, page: { width: number; height: number }): { x: number; y: number; width: number; height: number } | null {
+  const flip = node.getParent();
+  const group = flip?.getParent();
+  if (!flip || !group) return null;
+  const inv = group.getTransform().copy().multiply(flip.getTransform()).multiply(node.getTransform()).invert();
+  const pts = [
+    inv.point({ x: 0, y: 0 }),
+    inv.point({ x: page.width, y: 0 }),
+    inv.point({ x: 0, y: page.height }),
+    inv.point({ x: page.width, y: page.height }),
+  ];
+  const xs = pts.map((p) => p.x);
+  const ys = pts.map((p) => p.y);
+  const x = Math.min(...xs);
+  const y = Math.min(...ys);
+  const r = { x, y, width: Math.max(...xs) - x, height: Math.max(...ys) - y };
+  return Number.isFinite(r.x + r.y + r.width + r.height) ? r : null;
+}
+
+/** P-7 filter cache for an image node, bounded by the canvas limits (planFilterCache). */
+function syncImageFilterCache(node: KonvaImage, ctx: ApplyContext): void {
+  syncFilterCache(node, ctx.pixelRatio, {
+    ...(ctx.canvasLimits ? { limits: ctx.canvasLimits } : {}),
+    overflow: ctx.filterCacheOverflow ?? 'clamp',
+    visible: ctx.page && (node.filters()?.length ?? 0) > 0 ? pageRectInNode(node, ctx.page) : null,
+  });
+}
+
 function drawCheckerboard(ctx: KonvaContext, shape: KonvaShape): void {
   const w = shape.width();
   const h = shape.height();
@@ -249,7 +295,7 @@ function applyImage(group: KonvaGroup, el: ImageElement, ctx: ApplyContext): voi
       listening: true,
     });
     applyFilterAttrs(node, el.filters);
-    syncFilterCache(node, ctx.pixelRatio);
+    syncImageFilterCache(node, ctx);
     group.setAttr('plakatImage', decoded);
   } else {
     const node = replaceBody<KonvaShape>(
@@ -274,6 +320,13 @@ export interface PageSceneOptions {
   resources: Resources;
   /** Effective output pixel ratio: `s` for export, `zoom × devicePixelRatio` on screen. */
   pixelRatio: number;
+  /** Canvas limits for filter caches (default platformCanvasLimits()). */
+  canvasLimits?: CanvasLimits;
+  /**
+   * When a filter cache does not fit the limits even cropped to the page: 'clamp' (default,
+   * editor) renders it at a lower ratio; 'error' (export) throws CanvasLimitError.
+   */
+  filterCacheOverflow?: FilterCacheOverflow;
 }
 
 export interface PageSceneUpdateOptions {
@@ -317,6 +370,8 @@ export class PageScene {
   private page: Page;
   private resources: Resources;
   private ratio: number;
+  private readonly canvasLimits: CanvasLimits | undefined;
+  private readonly filterCacheOverflow: FilterCacheOverflow;
   private bgState: { asset: Asset | null; image: DecodedImage | null } = { asset: null, image: null };
   private destroyed = false;
 
@@ -327,6 +382,8 @@ export class PageScene {
     this.page = findPage(opts.doc, opts.pageId);
     this.resources = opts.resources;
     this.ratio = opts.pixelRatio;
+    this.canvasLimits = opts.canvasLimits;
+    this.filterCacheOverflow = opts.filterCacheOverflow ?? 'clamp';
     this.root = new Konva.Group({ name: PAGE_ROOT_NAME, x: 0, y: 0, scaleX: 1, scaleY: 1, opacity: 1 });
     this.root.setAttr('plakatPageId', opts.pageId);
     this.content = new Konva.Group({ name: PAGE_CONTENT_NAME });
@@ -370,7 +427,24 @@ export class PageScene {
   }
 
   private ctx(): ApplyContext {
-    return { assets: this.doc.assets, resources: this.resources, pixelRatio: this.ratio };
+    return {
+      assets: this.doc.assets,
+      resources: this.resources,
+      pixelRatio: this.ratio,
+      page: { width: this.doc.size.width, height: this.doc.size.height },
+      ...(this.canvasLimits ? { canvasLimits: this.canvasLimits } : {}),
+      filterCacheOverflow: this.filterCacheOverflow,
+    };
+  }
+
+  /** Re-caches every filtered image node for the current ratio and page (P-7). */
+  private syncFilterCaches(skip?: Set<Id>): void {
+    const ctx = this.ctx();
+    for (const [id, node] of this.nodes) {
+      if (skip?.has(id) || node.getAttr('plakatType') !== 'image') continue;
+      const img = (node.getChildren()[1] as KonvaGroup | undefined)?.getChildren()[0];
+      if (img instanceof Konva.Image) syncImageFilterCache(img, ctx);
+    }
   }
 
   private applyContentTransform(): void {
@@ -455,6 +529,8 @@ export class PageScene {
     const ctx = this.ctx();
 
     const seen = new Set<Id>();
+    /** Elements (re)applied with the new ctx in this update. */
+    const applied = new Set<Id>();
     for (const el of page.elements) {
       seen.add(el.id);
       let node = this.nodes.get(el.id);
@@ -468,8 +544,10 @@ export class PageScene {
         node = createElementNode(el, ctx);
         this.content.add(node);
         this.nodes.set(el.id, node);
+        applied.add(el.id);
       } else if (prev !== el || dirty.has(el.id) || (el.type === 'image' && this.imageStale(node, el))) {
         applyElement(node, el, ctx);
+        applied.add(el.id);
       }
       this.elements.set(el.id, el);
     }
@@ -483,7 +561,11 @@ export class PageScene {
       const node = this.nodes.get(el.id)!;
       if (node.zIndex() !== i + BACKGROUND_NODE_COUNT) node.zIndex(i + BACKGROUND_NODE_COUNT);
     });
-    if (sizeChanged) this.applyContentTransform();
+    if (sizeChanged) {
+      this.applyContentTransform();
+      // Filter caches may be cropped to the page box (planFilterCache).
+      this.syncFilterCaches(applied);
+    }
     if (sizeChanged || page.background !== prevPage.background || this.backgroundStale()) this.applyBackground();
     this.root.getLayer()?.batchDraw();
   }
@@ -497,11 +579,7 @@ export class PageScene {
     if (pixelRatio === this.ratio) return;
     this.ratio = pixelRatio;
     this.applyContentTransform();
-    for (const node of this.nodes.values()) {
-      if (node.getAttr('plakatType') !== 'image') continue;
-      const img = (node.getChildren()[1] as KonvaGroup | undefined)?.getChildren()[0];
-      if (img instanceof Konva.Image) syncFilterCache(img, pixelRatio);
-    }
+    this.syncFilterCaches();
     this.root.getLayer()?.batchDraw();
   }
 

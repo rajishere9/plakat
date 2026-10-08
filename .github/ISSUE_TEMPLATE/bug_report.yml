@@ -1,0 +1,63 @@
+name: Bug report
+description: Something does not work as expected.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for the report! Please check that it has not been reported already.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open the "Café menu" template
+        2. …
+    validations:
+      required: true
+  - type: textarea
+    id: file
+    attributes:
+      label: Design file or screenshots
+      description: If it is about rendering or export, attach the design file (Share → Download design file) and the exported file or a screenshot. Remove anything private first.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Editor
+        - Export (PNG / JPG / PDF)
+        - Templates
+        - Photos / uploads
+        - Server / API
+        - Docker / self-hosting
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Plakat version or commit
+    validations:
+      required: true
+  - type: input
+    id: env
+    attributes:
+      label: Browser and OS
+      placeholder: Chrome 140 on macOS 26
+  - type: dropdown
+    id: deploy
+    attributes:
+      label: How do you run Plakat?
+      options:
+        - npm run dev
+        - Docker Compose
+        - Docker (single container)
+        - Node.js (production build)
+        - Other

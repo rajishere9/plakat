@@ -14,7 +14,7 @@ import {
 } from '@plakat/schema';
 import { encodeCanvasDefault } from './encode.ts';
 import { AssetLoadError, FontLoadError } from './errors.ts';
-import { svgRasterSize } from './resources.ts';
+import { svgRasterScale, svgRasterSize } from './resources.ts';
 import type { DecodedImage, ExportData, RenderEnv } from './types.ts';
 
 export interface BrowserEnvOptions {
@@ -98,7 +98,7 @@ export function canonicalFontCssUrl(font: Pick<FontRef, 'family' | 'variants'>):
 /**
  * Browser RenderEnv (§3.1, §3.2): Google Fonts stylesheets + `document.fonts.load(query, text)`
  * with per-subset text, images through `HTMLImageElement` (`crossOrigin = 'anonymous'` before
- * `src`, then `decode()`), SVGs rasterized at their declared size × svgRasterScale. Nothing
+ * `src`, then `decode()`), SVGs rasterized at their declared size × the svgRasterScale the document needs. Nothing
  * here touches the DOM until a method is called.
  */
 export function createBrowserEnv(opts: BrowserEnvOptions = {}): RenderEnv {
@@ -131,7 +131,7 @@ export function createBrowserEnv(opts: BrowserEnvOptions = {}): RenderEnv {
     return p;
   }
 
-  async function loadImageUncached(src: string, asset: Asset, assetId: Id): Promise<DecodedImage> {
+  async function loadImageUncached(src: string, asset: Asset, assetId: Id, svgScale: number): Promise<DecodedImage> {
     const doc = getDoc();
     const img = new Image();
     img.crossOrigin = 'anonymous'; // must be set BEFORE src (P-4)
@@ -143,7 +143,7 @@ export function createBrowserEnv(opts: BrowserEnvOptions = {}): RenderEnv {
       throw new AssetLoadError(assetId, `Image asset "${assetId}" failed to decode`, { cause: err });
     }
     if (asset.mimeType === 'image/svg+xml') {
-      const size = svgRasterSize(asset);
+      const size = svgRasterSize(asset, svgScale);
       const canvas = doc.createElement('canvas');
       canvas.width = size.width;
       canvas.height = size.height;
@@ -158,11 +158,14 @@ export function createBrowserEnv(opts: BrowserEnvOptions = {}): RenderEnv {
 
   return {
     kind: 'browser',
-    loadImage(src, asset, assetId) {
-      const key = asset.mimeType === 'image/svg+xml' ? `${src}#svg:${asset.width}x${asset.height}` : src;
+    loadImage(src, asset, assetId, loadOpts) {
+      const svg = asset.mimeType === 'image/svg+xml';
+      const svgScale = loadOpts?.svgRasterScale ?? svgRasterScale(asset);
+      const size = svg ? svgRasterSize(asset, svgScale) : null;
+      const key = size ? `${src}#svg:${asset.width}x${asset.height}@${size.width}x${size.height}` : src;
       let p = images.get(key);
       if (!p) {
-        p = loadImageUncached(src, asset, assetId);
+        p = loadImageUncached(src, asset, assetId, svgScale);
         images.set(key, p);
         p.catch(() => images.delete(key));
       }

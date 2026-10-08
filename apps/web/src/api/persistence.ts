@@ -9,6 +9,7 @@ import {
   createDocument,
   instantiateTemplate,
   normalizeDocument,
+  pruneUnusedAssets,
   saveAsTemplate as saveAsTemplatePure,
   type Id,
   type PageSize,
@@ -148,7 +149,9 @@ export function createPersistence(options: PersistenceOptions = {}): Persistence
     const rev = s.docRevision;
     let doc: PlakatDocument;
     try {
-      doc = normalizeDocument(s.document);
+      // Unused registry entries (replaced/deleted images) are not persisted; undo history
+      // keeps its own copies, and the next save after an undo sends them again.
+      doc = normalizeDocument(pruneUnusedAssets(s.document));
       assertValidDocument(doc);
     } catch (e) {
       setP({ saveStatus: 'error', saveError: e instanceof Error ? e.message : String(e) });

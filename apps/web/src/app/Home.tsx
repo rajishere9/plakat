@@ -20,6 +20,7 @@ import { templateCategories, useAsync, useTemplates } from './hooks.ts';
 import { navigate } from './router.ts';
 import { useServices } from './services.tsx';
 import { errorMessage, toast } from './toasts.tsx';
+import { useUseTemplate } from './UseTemplateDialog.tsx';
 
 /** Label lines for a preset card: physical size first for print formats. */
 export function presetSizeLabel(p: Pick<PagePreset, 'width' | 'height' | 'physical'>): { primary: string; secondary: string | null } {
@@ -248,6 +249,7 @@ export function Home(): JSX.Element {
   const allTemplates = useAsync(() => api.listTemplates({}), [api]);
   const categories = templateCategories(allTemplates.data ?? []);
 
+  const useTpl = useUseTemplate();
   const create = async (key: string, source: Parameters<typeof persistence.createProject>[0]) => {
     setBusy(key);
     try {
@@ -452,10 +454,10 @@ export function Home(): JSX.Element {
                 <TemplateCard
                   key={t.id}
                   summary={t}
-                  busy={busy === `tpl:${t.id}`}
-                  onOpen={() => void create(`tpl:${t.id}`, { templateId: t.id })}
+                  busy={busy === `tpl:${t.id}` || useTpl.busyKey === `tpl:${t.id}`}
+                  onOpen={() => void useTpl.start({ templateId: t.id }, `tpl:${t.id}`)}
                   menu={[
-                    { id: 'use', label: 'Use template', icon: 'sparkle', onSelect: () => void create(`tpl:${t.id}`, { templateId: t.id }) },
+                    { id: 'use', label: 'Use template', icon: 'sparkle', onSelect: () => void useTpl.start({ templateId: t.id }, `tpl:${t.id}`) },
                     { id: 'edit', label: t.builtIn ? 'Open template (read-only)' : 'Edit template', icon: 'edit', onSelect: () => navigate({ name: 'template', id: t.id }) },
                     { id: 'file', label: 'Download template file', icon: 'file', onSelect: () => void downloadTemplate(t) },
                     ...(t.builtIn
@@ -472,6 +474,7 @@ export function Home(): JSX.Element {
         </section>
       </main>
 
+      {useTpl.element}
       <CustomSizeDialog open={customOpen} onClose={() => setCustomOpen(false)} onCreate={(size) => create('custom', { preset: size })} />
       <RenameDialog project={renaming} onClose={() => setRenaming(null)} onRename={(title) => (renaming ? renameProject(renaming, title) : Promise.resolve())} />
       <ConfirmDialog

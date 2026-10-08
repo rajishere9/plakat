@@ -26,6 +26,13 @@ process.once('SIGTERM', () => void shutdown('SIGTERM'));
 
 try {
   await app.listen({ port: config.port, host: config.host });
+  const loopback = ['127.0.0.1', '::1', 'localhost'].includes(config.host);
+  if (!loopback && !config.basicAuth) {
+    app.log.warn(
+      `Listening on ${config.host}: Plakat has no user accounts, so anyone who can reach this port can read and delete all data. ` +
+        'Keep it on a trusted network or behind an authenticating reverse proxy, or set BASIC_AUTH.',
+    );
+  }
   app.log.info(
     `Plakat server ready (${app.plakat.db.kind}${config.databaseUrl ? '' : `: ${config.pglite}`})${config.publicUrl ? ` at ${config.publicUrl}` : ''}`,
   );

@@ -61,6 +61,19 @@ describe('autosave', () => {
     expect(saved[1]!.baseVersion).toBe(2);
   });
 
+  it('does not persist assets no page uses (replaced images), but keeps them for undo', async () => {
+    const { store, saved, a } = setup();
+    const img = (src: string) => ({ src, width: 10, height: 10, mimeType: 'image/png' as const });
+    const id = a.addImage(img('/uploads/a.png'));
+    a.replaceImage(id, img('/uploads/b.png'));
+    await vi.advanceTimersByTimeAsync(1100);
+    expect(Object.values(saved.at(-1)!.doc.assets).map((x) => x.src)).toEqual(['/uploads/b.png']);
+    expect(Object.keys(store.getState().document.assets)).toHaveLength(2);
+    a.undo();
+    await vi.advanceTimersByTimeAsync(1100);
+    expect(Object.values(saved.at(-1)!.doc.assets).map((x) => x.src)).toEqual(['/uploads/a.png']);
+  });
+
   it('a 409 sets conflict and pauses autosave until resolved', async () => {
     const saveProject = vi.fn(async () => {
       throw new ApiError(409, 'version_conflict', 'stale');

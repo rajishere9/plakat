@@ -36,7 +36,8 @@ Decisions are marked **D-n**, each with a one-line rationale. Other packages mus
 | Numbers | Finite JSON numbers. Ranges are listed per field. |
 | Unknown keys | **Rejected** everywhere (strict objects). |
 | Defaults | Hand-written JSON may omit any field that has a default. `loadDocument()` always returns the canonical form with every field present, and `serializeDocument()` always writes the canonical form. Defaults are fresh per parse (no shared arrays or objects between documents). |
-| Size limits | One asset `src` ≤ 25 MiB of characters (`MAX_ASSET_SRC_LENGTH`), ≤ 20 000 elements across all pages (`MAX_TOTAL_ELEMENTS`), ≤ 2 000 000 characters of text content in total (`MAX_TOTAL_TEXT_LENGTH`), plus the per-field caps below. The server's own request-body limit (configured in `apps/server`) bounds the file as a whole. |
+| Size limits | One asset file ≤ 25 MiB of bytes (`MAX_ASSET_BYTES`, the single limit uploads, imports and clients must use), so one asset `src` ≤ 34 952 562 characters (`MAX_ASSET_SRC_LENGTH` = the base64 `data:` URI of a `MAX_ASSET_BYTES` file, `base64DataUriLength()`): every asset Plakat accepts can be embedded in a portable file. ≤ 20 000 elements across all pages (`MAX_TOTAL_ELEMENTS`), ≤ 2 000 000 characters of text content in total (`MAX_TOTAL_TEXT_LENGTH`), plus the per-field caps below. The server's own request-body limit (configured in `apps/server`) bounds the file as a whole. |
+| Nesting | Untrusted JSON (documents, brand kits) nested deeper than 64 objects/arrays (`MAX_JSON_DEPTH`; real files need fewer than 10) is a validation error. The check is iterative and runs before anything recursive (migration's `structuredClone`, zod, the reserved-key scan), so hostile input is reported as invalid instead of overflowing the stack. |
 
 - **D-17** One id namespace for pages, elements, slots and groups. *Rationale:* clone helpers and editors can map any id unambiguously, and a hand-written template where a slot is called `el_headline` cannot corrupt a clone.
 - **D-1** Unknown keys are rejected, not stripped. *Rationale:* any format change bumps `schemaVersion` (D-20), so an unknown key at a known version is always a typo or a corrupt file. Template authors get an error instead of silent data loss.
@@ -62,12 +63,12 @@ Decisions are marked **D-n**, each with a one-line rationale. Other packages mus
 |---|---|---|---|
 | `width`, `height` | number 1..20 000 | required | Document px. **May be fractional.** |
 | `presetId` | string \| null | `null` | Informational (UI label, analytics). Never used for math. |
-| `physical` | `{ width, height, unit: "mm" \| "in" }` \| null | `null` | Authoritative physical size for print and PDF. |
+| `physical` | `{ width, height, unit: "mm" \| "in" }` \| null | `null` | Authoritative physical size for print and PDF. Must convert to `width × height` px within 0.01 px (D-4, validated), and so is capped at 20 000 px (≈ 5291.67 mm / 208.33 in). |
 
 Conversions (`units.ts`), all exact with no rounding: `px = mm / 25.4 × 96`, `px = in × 96`, `pt = px × 72 / 96`.
 
 - **D-3** One page size per document. *Rationale:* this matches Canva, and it keeps template instantiation, "resize design" and PDF assembly trivial. Per-page sizes can come in a later version.
-- **D-4** For physical sizes, `width`/`height` store the **exact, unrounded** px value (A4 = `793.7007874015748 × 1122.5196850393702`), and `physical` keeps the original mm/in. *Rationale:* rounding at storage time would compound with export rounding. A4 at 300 DPI must come out at exactly 2480 × 3508, and 794 × 3.125 = 2481.25 would not.
+- **D-4** For physical sizes, `width`/`height` store the **exact, unrounded** px value (A4 = `793.7007874015748 × 1122.5196850393702`), and `physical` keeps the original mm/in. *Rationale:* rounding at storage time would compound with export rounding. A4 at 300 DPI must come out at exactly 2480 × 3508, and 794 × 3.125 = 2481.25 would not. Validation enforces the pairing: when `physical` is non-null, `|physicalToPx(physical) − {width, height}| ≤ 0.01` px (`PHYSICAL_SIZE_EPSILON`). Rasters are made from `width`/`height` and the PDF page from `physical`, so a file with, say, `1080 × 1080` px and an A4 `physical` would get its square image stretched onto a portrait page; it is refused. (`pdfPageSizePt()` also ignores a disagreeing `physical` for unvalidated in-memory documents.)
 - **D-5** Pixel rounding happens **once**, at raster time, through `exportPixelSize()` (see `render-export-pipeline.md` §4). Stored geometry is never rounded.
 - PDF pages larger than 14 400 pt on a side (jsPDF's and the PDF viewer limit; possible above ~19 200 px or ~5 080 mm) are written with an integer PDF `/UserUnit` > 1 (`pdfPageLayout()`), so the page is never clamped smaller than its image.
 
@@ -142,7 +143,7 @@ V1 has three element types: `text`, `shape` and `image`. The JSON uses a discrim
 | `fontSize` | number (0, 5000] | `32` | px |
 | `lineHeight` | 0.5..5 | `1.2` | Multiplier of `fontSize`. |
 | `letterSpacing` | number −1..5 | `0` | **em**: a fraction of `fontSize` added after each glyph (`0.05` = 5 %). The renderer passes `letterSpacing × fontSize` px to Konva (**D-18**). |
-| `align` | `left \| center \| right \| justify` | `left` | |
+| `align` | `left \| center \| right \| justify` | `left` | Absolute sides (`left` is left in RTL text too). See the bidi note below for `justify` in right-to-left text. |
 | `verticalAlign` | `top \| middle \| bottom` | `top` | Position of the text block inside `height`. |
 | `fill` | color | `"#000000"` | |
 | `textDecoration` | `none \| underline \| line-through` | `none` | |
@@ -150,6 +151,8 @@ V1 has three element types: `text`, `shape` and `image`. The JSON uses a discrim
 
 - **D-9** Text never clips. If the laid-out text is taller than `height`, it overflows downward from the top (see the pipeline doc §3.3). The editor auto-grows `height` to fit after edits. A box narrower than a single grapheme (width 0, a resize, large tracking, a big font in a small slot) is laid out at the width of its widest grapheme instead, overflowing to the side (pipeline doc §3.3). *Rationale:* Konva silently drops lines that do not fit a fixed height, and stops wrapping (dropping the rest of the paragraph) when one grapheme does not fit the width; losing user text in an export is unacceptable.
 - **D-18** `letterSpacing` is em-relative. *Rationale:* scaling a text box or changing its font size must not change its tracking or re-wrap it; absolute px would need a later migration.
+- **Direction** is not stored: the base direction of a text element is that of the first strong character of its content, like HTML `dir="auto"` (pipeline doc §3.3). Right-to-left text (Hebrew, Arabic, …) keeps `letterSpacing`; `justify` is drawn as `right` (its start edge) because the renderer cannot justify a shaped RTL run. In a left-to-right paragraph that contains RTL words, `letterSpacing` and `justify` are not applied (they would reverse the RTL words).
+- `opacity` applies to the element as one layer, like CSS `opacity`: overlapping lines or glyphs (tight `lineHeight`, negative `letterSpacing`) do not get darker.
 - No rich text (mixed styles within one element), text shadow or text stroke in V1.
 
 ### 6.3 `shape`
@@ -215,8 +218,8 @@ Fills are solid colors only in V1. Use `#rrggbbaa` for per-fill alpha. Gradients
 |---|---|---|---|
 | `type` | `"image"` | required | The only kind in V1. |
 | `mimeType` | `image/png \| image/jpeg \| image/webp \| image/gif \| image/svg+xml` | required | Authoritative. Bundling uses it. |
-| `width`, `height` | int > 0 | required | Declared natural size in px **after EXIF orientation** (as displayed). It is the coordinate space of `crop` (D-19), it allows layout math without decoding, and SVGs need it. Producers record the size of the pixels they serve: the server bakes EXIF orientation into uploads and stores post-orientation dimensions; a re-encode or downsize must keep the aspect ratio. Renderers scale crops to the decoded size and warn on an aspect mismatch above 1 % (`compareDecodedSize`). SVGs are rasterized at exactly `width × height` before use. |
-| `src` | string ≤ 25 MiB | required | One of the three forms below. |
+| `width`, `height` | int > 0 | required | Declared natural size in px **after EXIF orientation** (as displayed). It is the coordinate space of `crop` (D-19), it allows layout math without decoding, and SVGs need it. Producers record the size of the pixels they serve: the server bakes EXIF orientation into uploads and stores post-orientation dimensions; a re-encode or downsize must keep the aspect ratio. Renderers scale crops to the decoded size and warn on an aspect mismatch above 1 % (`compareDecodedSize`). SVGs are rasterized at `width × height` times a factor the document needs (how large it draws them, pipeline doc §3.2) before use. |
+| `src` | string ≤ `MAX_ASSET_SRC_LENGTH` (34 952 562) | required | One of the three forms below. A `data:` URI holds at most `MAX_ASSET_BYTES` (25 MiB) of bytes. |
 | `name` | string | `""` | |
 | `source` | object \| null | `null` | Provenance: `{ provider, externalId, pageUrl, author, license, licenseUrl, attribution }`. `pageUrl` and `licenseUrl` must be absolute `http(s)://` URLs (they become links). Required in practice for third-party providers (Openverse) so attribution survives into templates. |
 
@@ -317,7 +320,7 @@ The input template is never mutated.
 
 ## 11. Versioning and migration
 
-- `schemaVersion` is a **monotonic integer**. **Every** change to the persisted format bumps it, additions included, and there are no minor versions (**D-20**). *Rationale:* together with strict parsing (D-1), any reader can tell exactly what it can handle.
+- `schemaVersion` is a **monotonic integer**. **Every** change to the persisted format bumps it, additions included, and there are no minor versions (**D-20**). *Rationale:* together with strict parsing (D-1), any reader can tell exactly what it can handle. (Pre-release note: the validation changes made before the first release — the asset `src` cap raised from 26 214 400 characters to fit `MAX_ASSET_BYTES`, the `physical`/px agreement check and the nesting cap — stay at schemaVersion 1, since no released reader of version 1 exists. After the first release, raising a cap counts as a format change.)
 - A file **without** `schemaVersion` is **v0**: loose, unversioned JSON such as hand-written files or prototypes. The real migration `0 → 1` stamps `format`/`schemaVersion` and folds a top-level `width`/`height` into `size`.
 - Migrations are registered in `MIGRATIONS` (`version.ts`). Entry `i` upgrades `i → i+1`. A migration is a **pure function on untyped JSON**: it does not mutate its input and uses no clock or randomness. Migrations are **never deleted or edited** once released.
 - `migrateDocument(json)` applies the steps from the file's version up to `CURRENT_SCHEMA_VERSION`. `loadDocument(json)` migrates and then validates strictly. **`loadDocument` is the only sanctioned way to turn untrusted JSON (files, request bodies, DB rows) into a `PlakatDocument`.**
@@ -495,7 +498,7 @@ The smallest valid hand-written document (everything else defaults):
 | D-1 | Strict objects: unknown keys rejected. |
 | D-2 | Defaults on input, canonical output. |
 | D-3 | One page size per document. |
-| D-4 | Exact fractional px for physical sizes; `physical` is authoritative for print. |
+| D-4 | Exact fractional px for physical sizes; `physical` is authoritative for print and must agree with them (±0.01 px). |
 | D-5 | Rounding only at raster time (`exportPixelSize`). |
 | D-6 | Konva-native transforms: rotation about the top-left local origin. |
 | D-7 | Content clipped to the page. |

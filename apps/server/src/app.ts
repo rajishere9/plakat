@@ -4,6 +4,7 @@ import fastifyStatic from '@fastify/static';
 import Fastify, { type FastifyError, type FastifyInstance, type FastifyServerOptions } from 'fastify';
 import { OpenverseProvider } from './assets/openverse.ts';
 import { ProviderRegistry, type AssetProvider } from './assets/provider.ts';
+import { RemoteAssetImporter } from './assets/remote.ts';
 import type { Config } from './config.ts';
 import type { AppContext } from './context.ts';
 import { createDb, runMigrations, type Db } from './db/index.ts';
@@ -14,6 +15,7 @@ import { registerBrandKitRoutes } from './routes/brandKits.ts';
 import { registerProjectRoutes } from './routes/projects.ts';
 import { registerTemplateRoutes } from './routes/templates.ts';
 import { registerUploadRoutes } from './routes/uploads.ts';
+import { registerSecurity } from './security.ts';
 import { UploadStore } from './storage/uploads.ts';
 import { seedBuiltInTemplates, type SeedResult } from './templates/seed.ts';
 
@@ -52,16 +54,17 @@ const FASTIFY_CODES: Record<string, string> = {
   FST_PARTS_LIMIT: 'bad_request',
 };
 
+/** SQLSTATEs for input the database cannot store: invalid_text_representation, untranslatable_character, character_not_in_repertoire. */
+const PG_INVALID_INPUT_CODES = new Set(['22P02', '22P05', '22021']);
+
+const REMOTE_ASSET_TIMEOUT_MS = 20_000;
+
 /**
  * Builds the Plakat API server: connects the database (pg if DATABASE_URL, else
  * PGlite), applies migrations, seeds built-in templates and registers all routes.
  * Call `app.listen()` yourself, or use `app.inject()` in tests.
  */
 export async function buildApp(config: Config, options: BuildAppOptions = {}): Promise<FastifyInstance> {
-  const ownsDb = !options.db;
-  const db = options.db ?? (await createDb(config));
-  await runMigrations(db);
-
   const app = Fastify({
     logger: options.logger ?? { level: config.logLevel },
     bodyLimit: config.maxBodyBytes,
@@ -69,6 +72,15 @@ export async function buildApp(config: Config, options: BuildAppOptions = {}): P
     onConstructorPoisoning: 'error',
     trustProxy: true,
   });
+
+  const ownsDb = !options.db;
+  const db = options.db ?? (await createDb(config, { log: app.log }));
+  try {
+    await runMigrations(db);
+  } catch (error) {
+    if (ownsDb) await db.close().catch(() => {});
+    throw error;
+  }
 
   const uploads = new UploadStore(db, config.uploadDir, config.maxUploadBytes);
   await uploads.init();
@@ -83,13 +95,15 @@ export async function buildApp(config: Config, options: BuildAppOptions = {}): P
       }),
     ],
   );
+  const resolveHost = options.resolveHost ?? dnsResolver;
   const ctx: AppContext = {
     config,
     db,
     uploads,
     providers,
+    remoteAssets: new RemoteAssetImporter(uploads, { fetch: fetchImpl, resolveHost, timeoutMs: REMOTE_ASSET_TIMEOUT_MS }),
     fetch: fetchImpl,
-    resolveHost: options.resolveHost ?? dnsResolver,
+    resolveHost,
     now: options.now ?? (() => new Date()),
   };
 
@@ -104,7 +118,13 @@ export async function buildApp(config: Config, options: BuildAppOptions = {}): P
 
   if (ownsDb) app.addHook('onClose', async () => db.close());
 
+  // ---- Security --------------------------------------------------------------
+  registerSecurity(app, config);
+
   // ---- Parsers -----------------------------------------------------------
+  // No text/plain parser: it is a CORS-safelisted ("simple") content type that a
+  // foreign page can POST without a preflight, and no client uses it.
+  app.removeContentTypeParser('text/plain');
   app.addContentTypeParser('image/png', { parseAs: 'buffer', bodyLimit: config.maxThumbnailBytes }, (_req, body, done) => done(null, body));
   app.addContentTypeParser('application/vnd.plakat+json', { parseAs: 'string' }, app.getDefaultJsonParser('error', 'error'));
   await app.register(fastifyMultipart, {
@@ -120,6 +140,11 @@ export async function buildApp(config: Config, options: BuildAppOptions = {}): P
     const schemaError = schemaErrorToHttp(error);
     if (schemaError) return reply.code(schemaError.statusCode).send(schemaError.toBody());
     if (error.validation) return reply.code(400).send({ error: { code: 'bad_request', message: error.message } });
+    // Backstop for values PostgreSQL cannot store (NUL, lone surrogates): a client error, not a 500.
+    if (typeof error.code === 'string' && PG_INVALID_INPUT_CODES.has(error.code) && error.statusCode === undefined) {
+      req.log.warn({ err: error }, 'database rejected input');
+      return reply.code(400).send({ error: { code: 'invalid_input', message: 'The request contains characters or values that cannot be stored' } });
+    }
     const status = typeof error.statusCode === 'number' && error.statusCode >= 400 ? error.statusCode : 500;
     if (status >= 500) {
       req.log.error({ err: error }, 'request failed');

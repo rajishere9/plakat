@@ -10,7 +10,7 @@ import { createCanvas, loadImage as canvasLoadImage, registerFont } from 'canvas
 import { dataUriToBytes, isDataUri, type Asset, type AssetFetcher, type FontLoadRequest, type FontRef, type Id } from '@plakat/schema';
 import { encodeCanvasDefault } from './encode.ts';
 import { AssetLoadError, FontLoadError } from './errors.ts';
-import { svgRasterSize } from './resources.ts';
+import { svgRasterScale, svgRasterSize } from './resources.ts';
 import type { DecodedImage, RenderEnv } from './types.ts';
 
 export interface NodeFontFile {
@@ -60,7 +60,7 @@ export function createNodeEnv(opts: NodeEnvOptions = {}): NodeRenderEnv {
   const images = new Map<string, Promise<DecodedImage>>();
   const families = new Set<string>();
 
-  async function decode(src: string, asset: Asset, assetId: Id): Promise<DecodedImage> {
+  async function decode(src: string, asset: Asset, assetId: Id, svgScale: number): Promise<DecodedImage> {
     let bytes: Uint8Array;
     try {
       if (isDataUri(src)) bytes = dataUriToBytes(src).bytes;
@@ -76,8 +76,13 @@ export function createNodeEnv(opts: NodeEnvOptions = {}): NodeRenderEnv {
       throw new AssetLoadError(assetId, `Image asset "${assetId}" failed to decode`, { cause: err });
     }
     if (asset.mimeType === 'image/svg+xml') {
-      const size = svgRasterSize(asset);
+      const size = svgRasterSize(asset, svgScale);
       const canvas = createCanvas(size.width, size.height);
+      // node-canvas renders an SVG at its own width/height and scales that bitmap in
+      // drawImage (blurry); resizing the image first makes librsvg render the vector at
+      // the raster size, like a browser's drawImage of an SVG <img>.
+      img.width = size.width;
+      img.height = size.height;
       canvas.getContext('2d').drawImage(img, 0, 0, size.width, size.height);
       return canvas as unknown as DecodedImage;
     }
@@ -95,11 +100,14 @@ export function createNodeEnv(opts: NodeEnvOptions = {}): NodeRenderEnv {
     registeredFamilies() {
       return [...families];
     },
-    loadImage(src, asset, assetId) {
-      const key = asset.mimeType === 'image/svg+xml' ? `${src}#svg:${asset.width}x${asset.height}` : src;
+    loadImage(src, asset, assetId, loadOpts) {
+      const svg = asset.mimeType === 'image/svg+xml';
+      const svgScale = loadOpts?.svgRasterScale ?? svgRasterScale(asset);
+      const size = svg ? svgRasterSize(asset, svgScale) : null;
+      const key = size ? `${src}#svg:${asset.width}x${asset.height}@${size.width}x${size.height}` : src;
       let p = images.get(key);
       if (!p) {
-        p = decode(src, asset, assetId);
+        p = decode(src, asset, assetId, svgScale);
         images.set(key, p);
         p.catch(() => images.delete(key));
       }

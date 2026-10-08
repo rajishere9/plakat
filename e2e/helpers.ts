@@ -52,10 +52,24 @@ export async function createDesignFromPreset(page: Page, presetLabel: RegExp | s
   return designIdFromUrl(page.url());
 }
 
-/** Home → template card → new design from the template → editor ready. */
-export async function createDesignFromTemplate(page: Page, title: string): Promise<string> {
+/** The "Use template" fill form for `title`. */
+export function fillDialog(page: Page, title: string): Locator {
+  return page.getByRole('dialog', { name: `Use “${title}”` });
+}
+
+/**
+ * Home → template card → (fill form: "Use as is", or `fill` drives the form and creates)
+ * → new design from the template → editor ready.
+ */
+export async function createDesignFromTemplate(page: Page, title: string, fill?: (dialog: Locator) => Promise<void>): Promise<string> {
   await page.goto('/');
   await page.getByRole('button', { name: `Use template: ${title}`, exact: true }).click();
+  const dialog = fillDialog(page, title);
+  await Promise.race([page.waitForURL(/#\/design\//), dialog.waitFor({ state: 'visible' })]);
+  if (await dialog.isVisible()) {
+    if (fill) await fill(dialog);
+    else await dialog.getByRole('button', { name: 'Use as is' }).click();
+  }
   await page.waitForURL(/#\/design\//);
   await waitForEditor(page);
   return designIdFromUrl(page.url());

@@ -1,0 +1,40 @@
+name: Template proposal
+description: Propose a new built-in template (or say you are working on one).
+labels: [template]
+body:
+  - type: input
+    id: title
+    attributes:
+      label: Template name
+      placeholder: Wedding invitation
+    validations:
+      required: true
+  - type: dropdown
+    id: format
+    attributes:
+      label: Format
+      options:
+        - Instagram post
+        - Instagram story
+        - YouTube thumbnail
+        - A4 poster
+        - Business card (US)
+        - Business card (EU)
+        - New format (explain below)
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: Idea and slots
+      description: What is it for, and what would people fill in (texts, photos, colors)? A sketch or reference helps.
+    validations:
+      required: true
+  - type: checkboxes
+    id: rules
+    attributes:
+      label: Rules
+      options:
+        - label: I have read docs/templates.md (own work or CC0 images only, catalogued fonts, no real people or brands).
+          required: true
+        - label: I would like to build it myself.

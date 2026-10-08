@@ -29,6 +29,9 @@ RUN npm ci --ignore-scripts \
 # 2) runtime
 # ---------------------------------------------------------------------------
 FROM node:22-bookworm-slim AS runtime
+# HOST=0.0.0.0: inside a container the server must listen on all interfaces (the
+# server's own default is 127.0.0.1). Plakat has no user accounts: publish the port
+# only to trusted networks or behind an authenticating proxy (or set BASIC_AUTH).
 ENV NODE_ENV=production \
     PORT=8787 \
     HOST=0.0.0.0 \

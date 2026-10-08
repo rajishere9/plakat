@@ -2,12 +2,21 @@
  * PageScene structure (§2.2), element mapping (§3.3, §3.4), reconciliation, the readiness
  * barrier errors (§3.1, §3.2) and the editor helpers.
  */
-import { createTestEnv, editElement, editPage, image, makeDoc, page, rgba, shape, text, FIXTURE_FAMILY } from './test-support.ts';
+import { createTestEnv, editElement, editPage, image, imageAsset, makeDoc, page, rgba, shape, text, FIXTURE_FAMILY } from './test-support.ts';
 import { describe, expect, it } from 'vitest';
 import { customPageSize, exportPixelSize, presetToPageSize, type PlakatDocument } from '@plakat/schema';
 import { fixtureAssets } from './fixture-docs.ts';
-import { Konva, type KonvaGroup, type KonvaShape, type KonvaText } from './konva.ts';
-import { prepareResources } from './resources.ts';
+import { Konva, type KonvaGroup, type KonvaImage, type KonvaShape, type KonvaText } from './konva.ts';
+import {
+  SVG_RASTER_PIXEL_RATIO,
+  decodedSvgScale,
+  prepareResources,
+  resourcesOutdated,
+  svgDisplayScales,
+  svgRasterScale,
+  svgRasterSize,
+} from './resources.ts';
+import { renderPageCanvas } from './export.ts';
 import { rasterizePage } from './rasterize.ts';
 import {
   ASSET_PLACEHOLDER_NAME,
@@ -203,12 +212,64 @@ describe('images (§3.2, §3.5)', () => {
     scene.destroy();
   });
 
-  it('rasterizes SVGs at the declared size × svgRasterScale', async () => {
+  it('rasterizes SVGs at the declared size × svgRasterScale (for how large the document draws them)', async () => {
     const assets = fixtureAssets();
-    const doc = makeDoc(customPageSize(400, 400), [page('pg_1', [image('el_s', 'as_svg')])], { as_svg: assets['as_svg']! });
-    const { resources } = await sceneFor(doc);
-    const svg = resources.images.get('as_svg')!;
+    // declared 120×80, drawn at 1:1 → 4× (SVG_RASTER_PIXEL_RATIO)
+    const small = makeDoc(customPageSize(400, 400), [page('pg_1', [image('el_s', 'as_svg', { width: 120, height: 80 })])], { as_svg: assets['as_svg']! });
+    const svg = (await sceneFor(small)).resources.images.get('as_svg')!;
     expect([svg.width, svg.height]).toEqual([480, 320]);
+    expect(svgRasterScale({ width: 120, height: 80 })).toBe(SVG_RASTER_PIXEL_RATIO);
+    // drawn at 160×120 with cover (1.5 doc px per SVG px) → 6× rounded up to a half-octave step: 8×
+    const larger = makeDoc(customPageSize(400, 400), [page('pg_1', [image('el_s', 'as_svg')])], { as_svg: assets['as_svg']! });
+    expect(svgDisplayScales(larger).get('as_svg')).toBeCloseTo(1.5, 12);
+    const svg2 = (await sceneFor(larger)).resources.images.get('as_svg')!;
+    expect([svg2.width, svg2.height]).toEqual([960, 640]);
+    // capped: never more than 8192 px per side or 16.7 MP
+    expect(svgRasterSize({ width: 24, height: 24 }, svgRasterScale({ width: 24, height: 24 }, 1e6))).toEqual({ width: 4096, height: 4096 });
+    expect(svgRasterSize({ width: 10_000, height: 10_000 })).toEqual({ width: 4096, height: 4096 });
+  });
+
+  it('an enlarged small SVG icon stays crisp (vector edge, not an upscaled 96 px bitmap)', async () => {
+    const halves =
+      'data:image/svg+xml,' +
+      encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><rect width="12" height="24" fill="#000"/><rect x="12" width="12" height="24" fill="#fff"/></svg>');
+    const icon = imageAsset(halves, 24, 24, 'image/svg+xml');
+    const doc = makeDoc(customPageSize(600, 600), [page('pg_1', [image('el_icon', 'as_icon', { x: 0, y: 0, width: 600, height: 600 })])], { as_icon: icon });
+    for (const scale of [1, 'print'] as const) {
+      const r = await renderPageCanvas(doc, 'pg_1', { scale, env });
+      const px = rgba(r.canvas);
+      const y = Math.floor(r.height / 2);
+      let grey = 0;
+      for (let x = 0; x < r.width; x++) {
+        const v = px[(y * r.width + x) * 4]!;
+        if (v > 8 && v < 247) grey++;
+      }
+      r.release();
+      expect(grey, `intermediate pixels across the edge @ ${scale}`).toBeLessThanOrEqual(3);
+    }
+  });
+
+  it('resizing an SVG element re-rasterizes it (resourcesOutdated → prepareResources into)', async () => {
+    const assets = fixtureAssets();
+    const doc = makeDoc(customPageSize(800, 800), [page('pg_1', [image('el_s', 'as_svg', { width: 120, height: 80 })])], { as_svg: assets['as_svg']! });
+    const resources = await prepareResources(doc, undefined, env);
+    const scene = new PageScene({ doc, pageId: 'pg_1', resources, pixelRatio: 1 });
+    expect(resourcesOutdated(doc, resources)).toBe(false);
+    const grown = editElement(doc, 'pg_1', 'el_s', (e) => ({ ...e, width: 720, height: 480 }));
+    expect(resourcesOutdated(grown, resources)).toBe(true);
+    await prepareResources(grown, undefined, env, { into: resources });
+    expect(resourcesOutdated(grown, resources)).toBe(false);
+    const bitmap = resources.images.get('as_svg')!;
+    expect([bitmap.width, bitmap.height]).toEqual(Object.values(svgRasterSize({ width: 120, height: 80 }, svgRasterScale({ width: 120, height: 80 }, 6))));
+    scene.update(grown, { resources });
+    const img = (scene.getElementNode('el_s')!.getChildren()[1] as KonvaGroup).getChildren()[0] as KonvaImage;
+    expect(img.image()).toBe(bitmap);
+    // the editor's bitmap equals what a fresh export decodes
+    const fresh = await prepareResources(grown, ['pg_1'], env);
+    expect(decodedSvgScale(fresh.images.get('as_svg')!)).toBe(decodedSvgScale(bitmap));
+    // shrinking back returns to the smaller raster (export parity both ways)
+    expect(resourcesOutdated(doc, resources)).toBe(true);
+    scene.destroy();
   });
 
   it('missing assets: export refuses (AssetLoadError); the editor gets a placeholder that is replaced once loaded', async () => {

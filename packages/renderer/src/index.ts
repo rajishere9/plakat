@@ -4,7 +4,7 @@
  * Node (no DOM access at import time). Under Node, import `@plakat/renderer/node`
  * (createNodeEnv) first: it installs Konva's node-canvas backend.
  */
-export type { DecodedImage, ExportData, RenderCanvas, RenderEnv, Resources } from './types.ts';
+export type { DecodedImage, ExportData, LoadImageOptions, RenderCanvas, RenderEnv, Resources } from './types.ts';
 export { createEmptyResources } from './types.ts';
 export { AssetLoadError, CanvasLimitError, FontLoadError, RasterError } from './errors.ts';
 export {
@@ -24,7 +24,18 @@ export {
   type PageSceneUpdateOptions,
 } from './scene.ts';
 export { rasterizePage } from './rasterize.ts';
-export { prepareResources, svgRasterScale, svgRasterSize, type PrepareResourcesOptions } from './resources.ts';
+export {
+  SVG_RASTER_MAX_AREA,
+  SVG_RASTER_MAX_SIDE,
+  SVG_RASTER_PIXEL_RATIO,
+  decodedSvgScale,
+  prepareResources,
+  resourcesOutdated,
+  svgDisplayScales,
+  svgRasterScale,
+  svgRasterSize,
+  type PrepareResourcesOptions,
+} from './resources.ts';
 export {
   DEFAULT_JPEG_QUALITY,
   MIME_TYPES,
@@ -44,13 +55,19 @@ export {
 export {
   applyFilterAttrs,
   cacheFilteredNode,
+  FILTER_CACHE_MAX_AREA,
   filterCacheOffset,
+  planFilterCache,
+  platformCanvasLimits,
+  type FilterCacheOptions,
+  type FilterCacheOverflow,
+  type FilterCachePlan,
   hasActiveFilters,
   konvaFilterList,
   konvaSaturation,
   syncFilterCache,
 } from './filters.ts';
-export { invalidateTextMeasurements, widestGraphemeWidth } from './text.ts';
+export { containsRtl, invalidateTextMeasurements, textBaseDirection, textLayoutAttrs, widestGraphemeWidth, type TextLayoutAttrs } from './text.ts';
 export { createZip, crc32, readStoredZip, type ZipEntry } from './zip.ts';
 export { dpiToPixelsPerMetre, encodeCanvasDefault, readJpegDensity, readPngPhys, setJpegDpi, setPngDpi } from './encode.ts';
 export { exportBaseName, pageFileName, pageNumberLabel, slugify } from './filename.ts';

@@ -37,7 +37,12 @@ describe('POST /api/uploads', () => {
     expect(file.headers['cache-control']).toBe('public, max-age=31536000, immutable');
     expect(file.headers['x-content-type-options']).toBe('nosniff');
     expect(file.rawPayload.equals(data)).toBe(true);
-    if (mimeType === 'image/svg+xml') expect(file.headers['content-security-policy']).toBe(SVG_CSP);
+    if (mimeType === 'image/svg+xml') {
+      expect(file.headers['content-security-policy']).toBe(SVG_CSP);
+      // form-action does not fall back to default-src: an opened SVG must not host a working form.
+      expect(SVG_CSP).toContain("form-action 'none'");
+      expect(SVG_CSP).toMatch(/(^|; )sandbox($|;)/);
+    }
     else expect(file.headers['content-security-policy']).toBeUndefined();
 
     const etag = file.headers['etag'] as string;

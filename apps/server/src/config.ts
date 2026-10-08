@@ -29,6 +29,14 @@ export interface Config {
   publicUrl: string | null;
   /** Allowed CORS origin(s), comma separated; null = CORS disabled (same-origin only). */
   corsOrigin: string | null;
+  /**
+   * Extra Host header names accepted besides loopback/IP literals/single-label and
+   * private-use names and PUBLIC_URL's host (DNS-rebinding guard). Entries starting
+   * with "." match subdomains. `'*'` disables the check.
+   */
+  allowedHosts: string[] | '*';
+  /** Optional HTTP Basic credentials required for every request except /api/health. */
+  basicAuth: { user: string; password: string } | null;
   openverse: OpenverseConfig;
   /** Max JSON body (documents, imports, brand kits). */
   maxBodyBytes: number;
@@ -52,13 +60,30 @@ function int(env: NodeJS.ProcessEnv, key: string, fallback: number): number {
   return Math.floor(n);
 }
 
+function parseAllowedHosts(v: string | null): string[] | '*' {
+  if (v === null) return [];
+  const list = v
+    .split(',')
+    .map((h) => h.trim().toLowerCase())
+    .filter(Boolean);
+  return list.includes('*') ? '*' : list;
+}
+
+function parseBasicAuth(v: string | null): Config['basicAuth'] {
+  if (v === null) return null;
+  const i = v.indexOf(':');
+  if (i < 1 || i === v.length - 1) throw new Error('Invalid BASIC_AUTH: expected "user:password"');
+  return { user: v.slice(0, i), password: v.slice(i + 1) };
+}
+
 /** Reads configuration from environment variables (see .env.example). */
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const dataDir = path.resolve(str(env, 'DATA_DIR') ?? './data');
   const pgliteEnv = str(env, 'PGLITE');
   return {
     port: int(env, 'PORT', 8787),
-    host: str(env, 'HOST') ?? '0.0.0.0',
+    // Loopback by default: the API has no user accounts. The Docker image sets HOST=0.0.0.0.
+    host: str(env, 'HOST') ?? '127.0.0.1',
     databaseUrl: str(env, 'DATABASE_URL'),
     pglite: pgliteEnv === 'memory' ? 'memory' : path.resolve(pgliteEnv ?? path.join(dataDir, 'pglite')),
     dataDir,
@@ -67,6 +92,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     webDist: str(env, 'WEB_DIST') ? path.resolve(str(env, 'WEB_DIST')!) : null,
     publicUrl: str(env, 'PUBLIC_URL'),
     corsOrigin: str(env, 'CORS_ORIGIN'),
+    allowedHosts: parseAllowedHosts(str(env, 'ALLOWED_HOSTS')),
+    basicAuth: parseBasicAuth(str(env, 'BASIC_AUTH')),
     openverse: {
       clientId: str(env, 'OPENVERSE_CLIENT_ID'),
       clientSecret: str(env, 'OPENVERSE_CLIENT_SECRET'),

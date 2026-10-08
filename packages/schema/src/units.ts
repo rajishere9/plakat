@@ -111,14 +111,22 @@ export function exportPixelSize(
   };
 }
 
-/** PDF page size in points. Uses the physical size when present (exact), else px * 0.75. */
+/**
+ * PDF page size in points. Uses the physical size when present (exact), else px * 0.75.
+ * A `physical` that disagrees with width/height (more than 0.01 px; invalid per D-4, but
+ * possible for unvalidated in-memory documents) is ignored: the raster is width × height,
+ * and using the physical box would stretch it non-uniformly.
+ */
 export function pdfPageSizePt(size: Pick<PageSize, 'width' | 'height' | 'physical'>): {
   width: number;
   height: number;
 } {
   if (size.physical) {
-    const conv = (v: number, unit: PhysicalUnit) => (unit === 'mm' ? mmToPt(v) : inToPt(v));
-    return { width: conv(size.physical.width, size.physical.unit), height: conv(size.physical.height, size.physical.unit) };
+    const px = physicalToPx(size.physical);
+    if (Math.abs(px.width - size.width) <= 0.01 && Math.abs(px.height - size.height) <= 0.01) {
+      const conv = (v: number, unit: PhysicalUnit) => (unit === 'mm' ? mmToPt(v) : inToPt(v));
+      return { width: conv(size.physical.width, size.physical.unit), height: conv(size.physical.height, size.physical.unit) };
+    }
   }
   return { width: pxToPt(size.width), height: pxToPt(size.height) };
 }

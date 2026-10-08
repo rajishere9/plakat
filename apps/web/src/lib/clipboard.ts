@@ -9,6 +9,7 @@ import {
   findReservedKey,
   referencedAssetIds,
   deepCopy,
+  fitCropToImage,
   type Asset,
   type Id,
   type PlakatDocument,
@@ -43,8 +44,55 @@ export function buildClipboardData(doc: PlakatDocument, pageId: Id, ids: Iterabl
   return { elements, assets, sourceDocumentId: doc.id, sourcePageId: pageId };
 }
 
+/** Payload format version (bump together with incompatible element/asset changes). */
+export const CLIPBOARD_VERSION = 1;
+
 export function serializeClipboard(data: ClipboardData): string {
-  return JSON.stringify({ format: CLIPBOARD_FORMAT, version: 1, ...data });
+  return JSON.stringify({ format: CLIPBOARD_FORMAT, version: CLIPBOARD_VERSION, ...data });
+}
+
+/** Identity of a payload (same copy = same key), used to cascade repeated pastes. */
+export function clipboardKey(data: Pick<ClipboardData, 'elements' | 'sourceDocumentId'>): string {
+  return `${data.sourceDocumentId ?? ''}|${data.elements.map((e) => e.id).join(',')}`;
+}
+
+/**
+ * Human-readable text/plain for a copy: the text of copied text elements (one per line).
+ * Never the JSON payload, which would otherwise land in text fields and other apps.
+ */
+export function clipboardPlainText(data: Pick<ClipboardData, 'elements'>): string {
+  return data.elements
+    .flatMap((e) => (e.type === 'text' && e.content.trim() ? [e.content] : []))
+    .join('\n');
+}
+
+const HTML_ATTR = 'data-plakat-clipboard';
+
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+/**
+ * text/html flavor: the visible text plus the payload in a data attribute, a fallback
+ * for browsers that drop the custom MIME type between tabs.
+ */
+export function clipboardHtml(data: ClipboardData): string {
+  const text = clipboardPlainText(data);
+  return `<meta charset="utf-8"><div ${HTML_ATTR}="${escapeHtml(serializeClipboard(data))}">${escapeHtml(text).replace(/\n/g, '<br>')}</div>`;
+}
+
+/** Extracts a payload from clipboardHtml() output (null for any other HTML). */
+export function parseClipboardHtml(html: string): ClipboardData | null {
+  if (!html.includes(HTML_ATTR)) return null;
+  let raw: string | null = null;
+  if (typeof DOMParser !== 'undefined') {
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    raw = doc.querySelector(`[${HTML_ATTR}]`)?.getAttribute(HTML_ATTR) ?? null;
+  } else {
+    const m = new RegExp(`${HTML_ATTR}="([^"]*)"`).exec(html);
+    raw = m ? m[1]!.replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&') : null;
+  }
+  return raw ? parseClipboard(raw) : null;
 }
 
 /** Parses + validates a serialized clipboard payload; null if it is not one or is invalid. */
@@ -58,6 +106,8 @@ export function parseClipboard(text: string): ClipboardData | null {
   if (!json || typeof json !== 'object' || (json as Record<string, unknown>)['format'] !== CLIPBOARD_FORMAT) return null;
   if (findReservedKey(json)) return null;
   const obj = json as Record<string, unknown>;
+  // Unknown (newer/older) payload versions are refused rather than guessed at.
+  if (obj['version'] !== CLIPBOARD_VERSION) return null;
   const rawEls = Array.isArray(obj['elements']) ? obj['elements'] : [];
   const elements: PlakatElement[] = [];
   for (const raw of rawEls) {
@@ -74,6 +124,17 @@ export function parseClipboard(text: string): ClipboardData | null {
   }
   for (const el of elements) if (el.type === 'image' && !Object.hasOwn(assets, el.assetId)) return null;
   if (elements.length === 0) return null;
+  // Document-level constraints the per-element schema cannot check: a crop must lie inside
+  // its asset's declared size. Repair (never distort) instead of producing an invalid document.
+  for (let i = 0; i < elements.length; i++) {
+    const el = elements[i]!;
+    if (el.type !== 'image' || !el.crop) continue;
+    const a = assets[el.assetId]!;
+    const c = el.crop;
+    if (c.x < 0 || c.y < 0 || c.x + c.width > a.width + 1e-6 || c.y + c.height > a.height + 1e-6) {
+      elements[i] = { ...el, crop: fitCropToImage(c, a.width, a.height, el.width / el.height) };
+    }
+  }
   const str = (v: unknown) => (typeof v === 'string' ? v : null);
   return { elements, assets, sourceDocumentId: str(obj['sourceDocumentId']), sourcePageId: str(obj['sourcePageId']) };
 }

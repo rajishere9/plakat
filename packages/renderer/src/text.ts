@@ -49,3 +49,73 @@ export function widestGraphemeWidth(node: KonvaText, text: string, letterSpacing
   }
   return widest;
 }
+
+// ---------------------------------------------------------------------------
+// Bidi base direction (§3.3)
+// ---------------------------------------------------------------------------
+
+/** Characters of right-to-left scripts (bidi class R / AL) and the RLM / ALM marks. */
+const RTL_CHAR =
+  /[‏؜\p{Script=Hebrew}\p{Script=Arabic}\p{Script=Syriac}\p{Script=Thaana}\p{Script=Nko}\p{Script=Samaritan}\p{Script=Mandaic}\p{Script=Adlam}\p{Script=Hanifi_Rohingya}\p{Script=Yezidi}\p{Script=Mende_Kikakui}\p{Script=Imperial_Aramaic}\p{Script=Phoenician}\p{Script=Avestan}\p{Script=Kharoshthi}\p{Script=Old_South_Arabian}\p{Script=Old_North_Arabian}\p{Script=Nabataean}\p{Script=Palmyrene}\p{Script=Hatran}\p{Script=Manichaean}\p{Script=Psalter_Pahlavi}\p{Script=Inscriptional_Pahlavi}\p{Script=Inscriptional_Parthian}\p{Script=Old_Hungarian}\p{Script=Sogdian}\p{Script=Old_Sogdian}\p{Script=Elymaic}\p{Script=Chorasmian}\p{Script=Lydian}\p{Script=Cypriot}\p{Script=Old_Uyghur}]/u;
+/** A strong-direction candidate: letters (minus RTL-script marks/digits, which are not \p{L}) and the LRM/RLM/ALM marks. */
+const STRONG_CHAR = /[\p{L}‎‏؜]/u;
+
+/**
+ * Base direction of a text element: the direction of its first strong character, like
+ * HTML `dir="auto"` (the inline editor's textarea uses dir="auto" too). Text without a
+ * strong character (digits, punctuation, empty) is 'ltr'.
+ */
+export function textBaseDirection(text: string): 'ltr' | 'rtl' {
+  for (const ch of text) {
+    if (!STRONG_CHAR.test(ch)) continue;
+    return RTL_CHAR.test(ch) ? 'rtl' : 'ltr';
+  }
+  return 'ltr';
+}
+
+/**
+ * Cursive (joining) scripts. Browsers do not apply letter-spacing to them (it would break
+ * the joins; CSS Text 3 §8.2), but Konva still counts it into line widths, which would
+ * shift aligned text. So the renderer does not apply letterSpacing to text containing them.
+ */
+const CURSIVE_CHAR = /[\p{Script=Arabic}\p{Script=Syriac}\p{Script=Nko}\p{Script=Mandaic}\p{Script=Mongolian}\p{Script=Hanifi_Rohingya}\p{Script=Adlam}\p{Script=Psalter_Pahlavi}\p{Script=Manichaean}\p{Script=Sogdian}\p{Script=Old_Uyghur}]/u;
+
+/** True when the text contains any right-to-left character. */
+export function containsRtl(text: string): boolean {
+  return RTL_CHAR.test(text);
+}
+
+export interface TextLayoutAttrs {
+  /** Konva `direction`: always explicit, never 'inherit' (an inherited DOM direction would differ between editor and export). */
+  direction: 'ltr' | 'rtl';
+  /** Konva `align`. */
+  align: 'left' | 'center' | 'right' | 'justify';
+  /** Konva `letterSpacing` in px. */
+  letterSpacing: number;
+}
+
+/**
+ * Konva text attributes that keep right-to-left scripts intact (§3.3).
+ *
+ * Konva draws text grapheme by grapheme, left to right, whenever letterSpacing != 0 or
+ * align is 'justify' and its direction is not 'rtl'. That mirrors Hebrew and leaves
+ * Arabic unshaped. So:
+ *  - RTL base direction (first strong character): Konva direction 'rtl', which keeps one
+ *    native run per line (letterSpacing via ctx.letterSpacing). Konva cannot justify an
+ *    RTL run, so 'justify' falls back to 'right' (the start edge of RTL text). Text with a
+ *    cursive script (Arabic, …) gets no letterSpacing: browsers do not apply it to those
+ *    scripts, and Konva would still add it to the measured line width (misaligned text).
+ *  - LTR base direction with RTL characters inside: the per-grapheme path would reverse
+ *    the RTL words, so letterSpacing and justify are dropped (one native run, 'left').
+ *  - Everything else: unchanged.
+ */
+export function textLayoutAttrs(text: string, align: TextLayoutAttrs['align'], letterSpacingPx: number): TextLayoutAttrs {
+  const direction = textBaseDirection(text);
+  if (direction === 'rtl') {
+    return { direction, align: align === 'justify' ? 'right' : align, letterSpacing: CURSIVE_CHAR.test(text) ? 0 : letterSpacingPx };
+  }
+  if ((letterSpacingPx !== 0 || align === 'justify') && containsRtl(text)) {
+    return { direction, align: align === 'justify' ? 'left' : align, letterSpacing: 0 };
+  }
+  return { direction, align, letterSpacing: letterSpacingPx };
+}

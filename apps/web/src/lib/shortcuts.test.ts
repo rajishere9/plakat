@@ -95,6 +95,25 @@ describe('matchShortcut', () => {
     expect(matchShortcut({ key: 'Backspace', target: document.body }, { platform: 'mac' })?.id).toBe('delete');
   });
 
+  it('treats sliders, switches and buttons as non-editable (Mod+Z, Delete keep working)', () => {
+    const make = (type: string) => {
+      const i = document.createElement('input');
+      i.type = type;
+      return i;
+    };
+    for (const type of ['range', 'checkbox', 'radio', 'color', 'button']) {
+      const t = make(type);
+      expect(isEditableTarget(t)).toBe(false);
+      expect(matchShortcut({ key: 'z', metaKey: true, target: t }, { platform: 'mac' })?.id).toBe('undo');
+      expect(matchShortcut({ key: 'Backspace', target: t }, { platform: 'mac' })?.id).toBe('delete');
+    }
+    for (const type of ['text', 'number', 'search', 'email', 'url', 'password', 'tel', 'date']) expect(isEditableTarget(make(type))).toBe(true);
+    expect(isEditableTarget(document.createElement('select'))).toBe(true);
+    // Arrow keys on a focused slider keep their native behavior (no nudge).
+    expect(matchShortcut({ key: 'ArrowLeft', target: make('range') }, { platform: 'mac' })).toBeNull();
+    expect(matchShortcut({ key: 'ArrowLeft', target: make('checkbox') }, { platform: 'mac' })?.id).toBe('nudge');
+  });
+
   it('ignores IME composition and auto-repeat for toggles', () => {
     expect(m({ key: 'z', metaKey: true, isComposing: true })).toBeNull();
     expect(m({ key: 'g', metaKey: true, repeat: true })).toBeNull();

@@ -5,7 +5,11 @@ import { isValidId } from './ids.ts';
 import { DocumentValidationError, loadDocument, safeLoadDocument } from './load.ts';
 import { createFetchAssetFetcher, parseDocument, resolveAssetUrl } from './portable.ts';
 import { applySlotFill, instantiateTemplate, TemplateError } from './templates.ts';
-import { DocumentSchema, MAX_TOTAL_ELEMENTS } from './validation.ts';
+import { DocumentSchema, findReservedKey, MAX_ASSET_SRC_LENGTH, MAX_JSON_DEPTH, MAX_TOTAL_ELEMENTS } from './validation.ts';
+import { assertValidDocument } from './load.ts';
+import { loadBrandKit } from './brand.ts';
+import { mmToPx } from './units.ts';
+import { BRAND_KIT_FORMAT } from './types.ts';
 import { readExampleJson } from './test-utils.ts';
 
 const example = () => readExampleJson() as any;
@@ -117,7 +121,8 @@ describe('asset src hardening', () => {
   });
 
   it('caps the src length', () => {
-    expect(withSrc(`data:image/png;base64,${'A'.repeat(26_214_400)}`)).toMatch(/too big|<=|at most|Too big/i);
+    const prefix = 'data:image/png;base64,';
+    expect(withSrc(`${prefix}${'A'.repeat(MAX_ASSET_SRC_LENGTH - prefix.length + 4)}`)).toMatch(/too big|<=|at most|Too big/i);
   });
 
   it('attribution URLs must be http(s)', () => {
@@ -208,5 +213,56 @@ describe('defaults are never shared between documents', () => {
     raw.pages[0].elements = [el, { ...el, id: 'el_two' }];
     const loaded = loadDocument(raw);
     expect((loaded.pages[0]!.elements[0] as any).filters).not.toBe((loaded.pages[0]!.elements[1] as any).filters);
+  });
+});
+
+describe('deeply nested JSON', () => {
+  /** `depth` nested arrays around 0, built iteratively (JSON.parse handles any depth). */
+  const nested = (depth: number): unknown => JSON.parse(`${'['.repeat(depth)}0${']'.repeat(depth)}`);
+
+  it('is a validation error (never a RangeError from structuredClone or recursion)', () => {
+    for (const depth of [MAX_JSON_DEPTH + 1, 5_000, 200_000]) {
+      const doc = { ...example(), x: nested(depth) };
+      const r = safeLoadDocument(doc);
+      expect(r.ok).toBe(false);
+      expect(!r.ok && r.error).toBeInstanceOf(DocumentValidationError);
+      expect(issuesOf(doc)).toMatch(/^x(\[0\])+: Nested too deeply/);
+      expect(() => loadDocument(doc)).toThrow(DocumentValidationError);
+      expect(() => assertValidDocument(doc)).toThrow(DocumentValidationError);
+      const text = JSON.stringify(example()).replace(/^\{/, `{"x":${'['.repeat(depth)}0${']'.repeat(depth)},`);
+      expect(() => parseDocument(text)).toThrow(DocumentValidationError);
+      expect(() => loadBrandKit({ format: BRAND_KIT_FORMAT, schemaVersion: 1, id: 'bk_1', x: nested(depth) })).toThrow(DocumentValidationError);
+    }
+  });
+
+  it('leaves ordinary documents alone and reports unknown shallow keys as before', () => {
+    expect(issuesOf(example())).toBe('');
+    expect(issuesOf({ ...example(), x: nested(10) })).toMatch(/Unrecognized key/);
+  });
+
+  it('findReservedKey is iterative and keeps depth-first key order', () => {
+    expect(findReservedKey(nested(200_000))).toBeNull();
+    expect(findReservedKey(JSON.parse('{"a":{"b":{"__proto__":1}},"constructor":2}'))).toBe('a.b.__proto__');
+    expect(findReservedKey(JSON.parse('{"a":[1,{"prototype":1}]}'))).toBe('a[1].prototype');
+  });
+});
+
+describe('physical page size (D-4)', () => {
+  const withSize = (size: unknown) => issuesOf({ ...example(), size });
+
+  it('must agree with width/height (else the PDF image is stretched)', () => {
+    expect(withSize({ width: 1080, height: 1080, physical: { width: 210, height: 297, unit: 'mm' } })).toMatch(
+      /size\.physical: Physical size 210x297 mm is .* but size is 1080x1080 px/,
+    );
+    expect(withSize({ width: mmToPx(210), height: mmToPx(297), physical: { width: 210, height: 297, unit: 'mm' } })).toBe('');
+    // within 0.01 px is fine (e.g. a value rounded when written by another tool)
+    expect(withSize({ width: 793.705, height: 1122.515, physical: { width: 210, height: 297, unit: 'mm' } })).toBe('');
+    expect(withSize({ width: 794, height: 1123, physical: { width: 210, height: 297, unit: 'mm' } })).toMatch(/size\.physical/);
+    expect(withSize({ width: 336, height: 192, physical: { width: 3.5, height: 2, unit: 'in' } })).toBe('');
+  });
+
+  it('is capped at the 20 000 px page size', () => {
+    expect(withSize({ width: 20_000, height: 100, physical: { width: 208.4, height: 100 / 96, unit: 'in' } })).toMatch(/physical\.width: Physical width exceeds/);
+    expect(withSize({ width: 20_000, height: 96, physical: { width: 20_000 / 96, height: 1, unit: 'in' } })).toBe('');
   });
 });

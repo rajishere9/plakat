@@ -27,6 +27,15 @@ export interface SlotRow {
   property: 'fill' | 'stroke';
   /** Display only. */
   elementLabel: string;
+  /** Text slots: characters of the current (placeholder) text, checked against maxLength. */
+  textLength?: number;
+}
+
+/** Rows whose placeholder text is longer than their own maxLength (the template would be unusable as is). */
+export function slotRowProblems(rows: readonly SlotRow[]): string[] {
+  return rows
+    .filter((r) => r.checked && r.kind === 'text' && r.maxLength !== null && (r.textLength ?? 0) > r.maxLength)
+    .map((r) => `“${r.label.trim() || r.elementLabel}” has ${r.textLength} characters but allows at most ${r.maxLength}. Shorten the text or raise the limit.`);
 }
 
 function kindOf(el: PlakatElement): SlotSpec['kind'] {
@@ -56,6 +65,7 @@ export function initialSlotRows(doc: PlakatDocument): SlotRow[] {
         maxLength: slot?.kind === 'text' ? slot.maxLength : null,
         property: slot?.kind === 'color' ? slot.property : el.type === 'shape' && (el.shape === 'line' || (el.fill === null && el.stroke !== null)) ? 'stroke' : 'fill',
         elementLabel: getElementLabel(el),
+        textLength: el.type === 'text' ? [...el.content].length : 0,
       });
     }
   });
@@ -116,6 +126,11 @@ export function SaveAsTemplateDialog({ open, onClose, document: doc, onSave, onD
   const suggestions = useMemo(() => [...new Set([...(doc.size.presetId ? [doc.size.presetId] : []), ...categories])], [categories, doc.size.presetId]);
 
   const run = async (kind: 'save' | 'download') => {
+    const problems = slotRowProblems(rows);
+    if (problems.length) {
+      setError(problems.join(' '));
+      return;
+    }
     setBusy(kind);
     setError(null);
     try {
@@ -197,7 +212,7 @@ export function SaveAsTemplateDialog({ open, onClose, document: doc, onSave, onD
                     />
                     {r.kind === 'text' && (
                       <input
-                        className="input slot-row__max"
+                        className={`input slot-row__max${r.checked && r.maxLength !== null && (r.textLength ?? 0) > r.maxLength ? ' is-invalid' : ''}`}
                         aria-label={`Maximum characters for ${r.elementLabel}`}
                         placeholder="Max"
                         inputMode="numeric"

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { Konva, rasterizePage, renderPageWithResources, type RenderEnv } from '@plakat/renderer';
+import { FontLoadError, Konva, rasterizePage, renderPageWithResources, type RenderEnv } from '@plakat/renderer';
 import { createDocument, createImageElement, createShapeElement, createTextElement, type Asset, type ImageElement, type PlakatDocument, type TextElement } from '@plakat/schema';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createEditorStore, type EditorStore } from '../store/editor-store.ts';
@@ -271,12 +271,49 @@ describe('WorkspaceController: drag & transform', () => {
     expect(el(c.store, 'r1').x).toBeCloseTo(397, 3);
   });
 
-  it('locked elements are not draggable', async () => {
+  it('locked elements are not draggable; a press on one starts a marquee, a click selects it', async () => {
     const c = await setup();
     const from = at(c, 150, 750);
     drag(c, from, { x: from.x + 100, y: from.y + 100 });
     expect(el(c.store, 'locked').x).toBe(100);
+    expect(c.store.getState().selectedIds).toEqual([]);
+    click(c, at(c, 150, 750));
     expect(c.store.getState().selectedIds).toEqual(['locked']);
+  });
+
+  it('a full-page locked background does not block rubber-band selection', async () => {
+    const doc = fixtureDoc();
+    doc.pages[0]!.elements.unshift(createShapeElement('rect', { id: 'bg', x: 0, y: 0, width: 1000, height: 1000, fill: '#eeeeee', locked: true }));
+    const c = await setup(doc);
+    drag(c, at(c, 50, 50), at(c, 650, 160));
+    expect(c.store.getState().selectedIds).toEqual(['r1', 'e1']);
+    // Already-selected locked background: still a marquee.
+    click(c, at(c, 500, 600));
+    expect(c.store.getState().selectedIds).toEqual(['bg']);
+    drag(c, at(c, 380, 430), at(c, 450, 480));
+    expect(c.store.getState().selectedIds).toEqual(['t1']);
+  });
+
+  it('dropping a dragged element over another page moves it to that page (one undo step)', async () => {
+    const c = await setup();
+    const page2 = c.store.getState().document.pages[1]!.id;
+    click(c, at(c, 150, 150));
+    drag(c, at(c, 150, 150), at(c, 160, 170, 1), { altKey: true });
+    const doc = c.store.getState().document;
+    expect(doc.pages[0]!.elements.some((e) => e.id === 'r1')).toBe(false);
+    const moved = doc.pages[1]!.elements.find((e) => e.id === 'r1')!;
+    expect(moved.x).toBeCloseTo(110, 4);
+    expect(moved.y).toBeCloseTo(120, 4);
+    expect(doc.pages[1]!.elements.at(-1)!.id).toBe('r1');
+    expect(c.store.getState().activePageId).toBe(page2);
+    expect(c.store.getState().selectedIds).toEqual(['r1']);
+    expect(c.store.getState().undoLabel).toBe('Move to page');
+    expect(c.controller.getScene(page2)!.getElementNode('r1')).toBeTruthy();
+    expectParity(c, 0, 1);
+    expectParity(c, 1, 1);
+    c.store.getState().actions.undo();
+    expect(c.store.getState().document.pages[0]!.elements.find((e) => e.id === 'r1')).toMatchObject({ x: 100, y: 100 });
+    expect(c.store.getState().document.pages[1]!.elements.some((e) => e.id === 'r1')).toBe(false);
   });
 
   it('commits Transformer results through bakeTransform and resets the node', async () => {
@@ -413,6 +450,43 @@ describe('WorkspaceController: modes', () => {
     expect((el(c.store, 't1') as { content: string }).content).toBe('Hello Plakat');
   });
 
+  it('refits the text box after panel edits of layout fields (grow only, same undo step)', async () => {
+    const c = await setup();
+    const a = c.store.getState().actions;
+    a.updateElement('t1', { fontSize: 120 }, { label: 'Font size' });
+    await Promise.resolve();
+    const t1 = el(c.store, 't1') as TextElement;
+    const m = c.controller.measureText(t1);
+    expect(m.height).toBeGreaterThan(60);
+    expect(t1.height).toBeCloseTo(Math.ceil(m.height * 100) / 100, 6);
+    expect(c.store.getState().undoLabel).toBe('Font size');
+    a.undo();
+    await Promise.resolve();
+    expect(el(c.store, 't1')).toMatchObject({ fontSize: 40, height: 60 });
+    // Undo never triggers a refit commit (that would drop the redo stack).
+    expect(c.store.getState().canRedo).toBe(true);
+    a.redo();
+    expect(el(c.store, 't1').height).toBeCloseTo(t1.height, 6);
+    a.undo();
+    // Shrinking the font never shrinks the box (vertical alignment uses the extra height).
+    a.updateElement('t1', { fontSize: 10 });
+    await Promise.resolve();
+    expect(el(c.store, 't1').height).toBe(60);
+    // Other text edits (bold, font family) refit too.
+    a.updateElement('t1', { content: 'one two three four five six seven eight nine ten', fontSize: 40 });
+    await Promise.resolve();
+    expect(el(c.store, 't1').height).toBeGreaterThan(60);
+  });
+
+  it('double-click remembers the click point for the inline editor caret (consumed once)', async () => {
+    const c = await setup();
+    const p = at(c, 450, 470);
+    c.controller.doubleClick(p);
+    expect(c.store.getState().textEditingId).toBe('t1');
+    expect(c.controller.takeTextEditCaret('t1')).toEqual(p);
+    expect(c.controller.takeTextEditCaret('t1')).toBeNull();
+  });
+
   it('crop mode: ghost + crop rect, Enter/exit applies the crop', async () => {
     const c = await setup();
     c.controller.doubleClick(at(c, 700, 750));
@@ -450,5 +524,34 @@ describe('WorkspaceController: modes', () => {
     c.controller.setPan(-123, 77, { clamp: false });
     const bytes = await c.controller.snapshotPage(c.store.getState().document.pages[0]!.id, 1);
     expect(Array.from(bytes.subarray(0, 4))).toEqual([0x89, 0x50, 0x4e, 0x47]);
+  });
+});
+
+describe('WorkspaceController: late fonts', () => {
+  it('rebuilds text and clears missingFonts when a font arrives after the barrier gave up', async () => {
+    const doc = fixtureDoc();
+    const t1 = doc.pages[0]!.elements.find((e) => e.id === 't1') as TextElement;
+    t1.fontFamily = 'Playfair Display';
+    const store = createEditorStore({ document: doc });
+    const env = testEnv();
+    let available = false;
+    const label = '"Playfair Display" normal 400';
+    env.loadFonts = async () => {
+      if (!available) throw new FontLoadError([label], 'Font loading timed out');
+    };
+    const statuses: string[][] = [];
+    const controller = new WorkspaceController({ host: makeHost(), store, env, devicePixelRatio: () => 1, onStatus: (st) => statuses.push(st.missingFonts) });
+    live.push(controller);
+    await controller.ready();
+    expect(controller.getStatus().missingFonts).toEqual([label]);
+    expect(await controller.retryMissingFonts()).toEqual([]);
+    expect(controller.getStatus().missingFonts).toEqual([label]);
+    const before = controller.getElementNode('t1')!.findOne('Text');
+    available = true;
+    expect(await controller.retryMissingFonts()).toEqual([label]);
+    expect(controller.getStatus().missingFonts).toEqual([]);
+    expect(statuses.at(-1)).toEqual([]);
+    // The text node was rebuilt (fresh measurement with the real face).
+    expect(controller.getElementNode('t1')!.findOne('Text')).not.toBe(before);
   });
 });

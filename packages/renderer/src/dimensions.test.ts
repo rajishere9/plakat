@@ -3,7 +3,7 @@
  */
 import { createTestEnv, decodePng, image, makeDoc, page, pixelAt, rgba, shape, text } from './test-support.ts';
 import { describe, expect, it } from 'vitest';
-import { PAGE_PRESETS, presetToPageSize, type ExportScaleId, type PresetId } from '@plakat/schema';
+import { PAGE_PRESETS, customPageSize, mmToPx, presetToPageSize, type ExportScaleId, type PageSize, type PresetId } from '@plakat/schema';
 import { exportPage, renderPageCanvas } from './export.ts';
 import { dpiToPixelsPerMetre, readPngPhys } from './encode.ts';
 import { fixtureAssets } from './fixture-docs.ts';
@@ -60,6 +60,42 @@ describe('export dimensions (§6.1.1, §4.1 table)', () => {
       });
     }
   }
+
+  // Not in the CI-fast preset loop (§6.1 item 1): the tallest preset at print, raster only.
+  it('instagram-story @ print → 3375 × 6000 (raster, no encode)', T, async () => {
+    const r = await renderPageCanvas(presetDoc('instagram-story'), 'pg_1', { scale: 'print', env });
+    expect([r.canvas.width, r.canvas.height, r.width, r.height]).toEqual([3375, 6000, 3375, 6000]);
+    r.release();
+  });
+
+  // Fractional custom sizes. Expected values come from the physical/px math directly
+  // (round half up of size × dpi), not from exportPixelSize or the §4.1 table.
+  const halfUp = (x: number) => Math.floor(x + 0.5);
+  const mm = (v: number, dpi: number) => halfUp((v / 25.4) * dpi);
+  const CUSTOM: [string, PageSize, ExportScaleId, [number, number]][] = [
+    ['100.5 × 50.5 px', customPageSize(100.5, 50.5), '1x', [101, 51]],
+    ['100.5 × 50.5 px', customPageSize(100.5, 50.5), '2x', [201, 101]],
+    ['100.5 × 50.5 px', customPageSize(100.5, 50.5), 'print', [314, 158]],
+    ['32.16 × 4.64 px (float noise on .5)', customPageSize(32.16, 4.64), 'print', [101, 15]],
+    ['85.5 × 54 mm', { width: mmToPx(85.5), height: mmToPx(54), presetId: null, physical: { width: 85.5, height: 54, unit: 'mm' } }, '1x', [mm(85.5, 96), mm(54, 96)]],
+    ['85.5 × 54 mm', { width: mmToPx(85.5), height: mmToPx(54), presetId: null, physical: { width: 85.5, height: 54, unit: 'mm' } }, '2x', [mm(85.5, 192), mm(54, 192)]],
+    ['85.5 × 54 mm', { width: mmToPx(85.5), height: mmToPx(54), presetId: null, physical: { width: 85.5, height: 54, unit: 'mm' } }, 'print', [mm(85.5, 300), mm(54, 300)]],
+    ['3.5 × 2.25 in', { width: 336, height: 216, presetId: null, physical: { width: 3.5, height: 2.25, unit: 'in' } }, 'print', [1050, 675]],
+  ];
+  for (const [label, size, scale, dims] of CUSTOM) {
+    it(`custom ${label} @ ${scale} → ${dims.join(' × ')}, full-bleed edges covered`, T, async () => {
+      const doc = makeDoc(size, [page('pg_1', [shape('el_bleed', 'rect', { x: 0, y: 0, width: size.width, height: size.height, fill: '#000000' })])]);
+      const r = await renderPageCanvas(doc, 'pg_1', { scale, env });
+      expect([r.canvas.width, r.canvas.height]).toEqual(dims);
+      const px = rgba(r.canvas);
+      const corners = [pixelAt(px, r.width, 0, 0), pixelAt(px, r.width, r.width - 1, r.height - 1)];
+      r.release();
+      expect(corners.map((c) => c.join())).toEqual(['0,0,0,255', '0,0,0,255']);
+    });
+  }
+  it('custom-size expectations are the plain dpi math', () => {
+    expect([mm(85.5, 300), mm(54, 300), mm(85.5, 96), mm(54, 96)]).toEqual([1010, 638, 323, 204]);
+  });
 
   it('JPG has the same dimensions as PNG', T, async () => {
     const { loadImage } = await import('canvas');

@@ -5,7 +5,7 @@
  */
 import { expect, test } from '@playwright/test';
 import type { PlakatDocument, TextElement } from '@plakat/schema';
-import { captureDownload, createDesignFromTemplate, elementCenter, getDocument, openShareMenu, trackPageErrors, waitForEditor } from './helpers.ts';
+import { captureDownload, createDesignFromTemplate, elementCenter, fillDialog, getDocument, openShareMenu, trackPageErrors, waitForEditor } from './helpers.ts';
 
 const NEW_QUOTE = 'Glow Serum 2.0'; // within the headline slot's maxLength (22)
 
@@ -109,6 +109,7 @@ test('template → edit slot text → save as template → download file → re-
   // --- use the imported template ------------------------------------------------------------------
   await expect(page.getByRole('button', { name: `Use template: ${templateTitle}` })).toHaveCount(2);
   await page.getByRole('button', { name: `Use template: ${templateTitle}` }).first().click();
+  await fillDialog(page, templateTitle).getByRole('button', { name: 'Use as is' }).click();
   await page.waitForURL(/#\/design\//);
   await waitForEditor(page);
   const fromImport = await getDocument(page);

@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
-import { normalizeDocument, parseDocument, PORTABLE_FILE_EXTENSION } from '@plakat/schema';
+import { createId, normalizeDocument, parseDocument, PORTABLE_FILE_EXTENSION } from '@plakat/schema';
 import type { Db } from '../db/index.ts';
 import { documentSummary, internalizeDocumentAssets } from '../documents.ts';
 import type { UploadStore } from '../storage/uploads.ts';
@@ -62,6 +62,13 @@ export async function seedBuiltInTemplates(
       const doc = await internalizeDocumentAssets(parsed, uploads);
       const s = documentSummary(doc);
       const hash = createHash('sha256').update(text).digest('hex');
+      // A user template squatting this built-in's id (imported before user imports got
+      // fresh ids, or from a newer instance) is moved to a fresh id; the built-in wins.
+      const moved = await db.query<{ id: string }>('UPDATE templates SET id = $2 WHERE id = $1 AND built_in = false RETURNING id', [
+        doc.id,
+        createId('doc'),
+      ]);
+      if (moved.rows[0]) log.warn(`User template "${doc.id}" moved to id "${moved.rows[0].id}" to make room for the built-in template ${rel}`);
       const { rows } = await db.query(
         `INSERT INTO templates (id, title, category, document, schema_version, version, built_in, content_hash, search_text, size, page_count, slot_count)
          VALUES ($1, $2, $3, $4::jsonb, $5, 1, true, $6, $7, $8::jsonb, $9, $10)

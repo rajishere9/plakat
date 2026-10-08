@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { ID_PATTERN, RESERVED_IDS } from './ids.ts';
 import type * as T from './types.ts';
 import { BRAND_KIT_FORMAT, DOCUMENT_FORMAT } from './types.ts';
+import { physicalToPx, toPx } from './units.ts';
 
 // ---------------------------------------------------------------------------
 // Primitives
@@ -24,8 +25,30 @@ export const HTTP_URL_PATTERN = /^https?:\/\/[^\s\\\x00-\x1f\x7f]+$/i;
  */
 export const FONT_FAMILY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9 ]{0,99}$/;
 
-/** Max characters of one asset `src` (25 MiB; a data: URI of ~18 MiB of bytes). */
-export const MAX_ASSET_SRC_LENGTH = 26_214_400;
+/**
+ * Max bytes of one image asset file (25 MiB). THE limit for uploads, imported provider
+ * images and embedded assets: servers and clients must import it instead of keeping
+ * their own copy, so that every asset Plakat accepts can still be exported as a
+ * portable `.plakat.json` (MAX_ASSET_SRC_LENGTH is derived from it).
+ */
+export const MAX_ASSET_BYTES = 25 * 1024 * 1024;
+
+/** Length of `data:<mimeType>;base64,<payload>` for `byteLength` bytes (what bundleAssets writes). */
+export function base64DataUriLength(byteLength: number, mimeType: string): number {
+  return `data:${mimeType};base64,`.length + 4 * Math.ceil(byteLength / 3);
+}
+
+/**
+ * Max characters of one asset `src`: a base64 data: URI of MAX_ASSET_BYTES bytes with the
+ * longest image mime type (34 952 562 characters), so any accepted asset can be embedded.
+ */
+export const MAX_ASSET_SRC_LENGTH = base64DataUriLength(MAX_ASSET_BYTES, 'image/svg+xml');
+/** Max nesting depth of untrusted JSON (documents, brand kits). Real documents need < 10. */
+export const MAX_JSON_DEPTH = 64;
+/** Tolerance (px) between `size.width/height` and the px value of `size.physical` (D-4). */
+export const PHYSICAL_SIZE_EPSILON = 0.01;
+/** Max page side in document px. */
+export const MAX_PAGE_SIDE_PX = 20_000;
 /** Max elements across all pages of one document. */
 export const MAX_TOTAL_ELEMENTS = 20_000;
 /** Max characters of text content across all pages of one document. */
@@ -63,15 +86,24 @@ export const FontFamilySchema = z
 // Size & meta
 // ---------------------------------------------------------------------------
 
-export const PhysicalSizeSchema = z.strictObject({
-  width: z.number().positive().max(10_000),
-  height: z.number().positive().max(10_000),
-  unit: z.enum(['mm', 'in']),
-});
+export const PhysicalSizeSchema = z
+  .strictObject({
+    width: z.number().positive().max(10_000),
+    height: z.number().positive().max(10_000),
+    unit: z.enum(['mm', 'in']),
+  })
+  .superRefine((p, ctx) => {
+    // The page px size is capped at MAX_PAGE_SIDE_PX; so is its physical size (≈ 5291.67 mm / 208.33 in).
+    for (const side of ['width', 'height'] as const) {
+      if (toPx(p[side], p.unit) > MAX_PAGE_SIDE_PX + PHYSICAL_SIZE_EPSILON) {
+        ctx.addIssue({ code: 'custom', path: [side], message: `Physical ${side} exceeds the maximum page size of ${MAX_PAGE_SIDE_PX} px` });
+      }
+    }
+  });
 
 export const PageSizeSchema = z.strictObject({
-  width: z.number().min(1).max(20_000),
-  height: z.number().min(1).max(20_000),
+  width: z.number().min(1).max(MAX_PAGE_SIDE_PX),
+  height: z.number().min(1).max(MAX_PAGE_SIDE_PX),
   presetId: z.string().max(64).nullable().default(null),
   physical: PhysicalSizeSchema.nullable().default(null),
 });
@@ -353,6 +385,19 @@ function checkDocumentReferences(doc: z.output<typeof DocumentObjectSchema>, ctx
   };
   const hasAsset = (id: string) => Object.hasOwn(doc.assets, id);
 
+  // D-4: width/height are the exact px of `physical`. Raster exports use width/height and
+  // the PDF page uses `physical`, so a disagreement would stretch the PDF image.
+  if (doc.size.physical) {
+    const px = physicalToPx(doc.size.physical);
+    if (Math.abs(px.width - doc.size.width) > PHYSICAL_SIZE_EPSILON || Math.abs(px.height - doc.size.height) > PHYSICAL_SIZE_EPSILON) {
+      issue(
+        ctx,
+        ['size', 'physical'],
+        `Physical size ${doc.size.physical.width}x${doc.size.physical.height} ${doc.size.physical.unit} is ${px.width}x${px.height} px, but size is ${doc.size.width}x${doc.size.height} px (width/height must be the exact px of physical)`,
+      );
+    }
+  }
+
   let totalElements = 0;
   let totalText = 0;
   doc.pages.forEach((page, pi) => {
@@ -508,21 +553,61 @@ export function toValidationIssues(error: z.ZodError): ValidationIssue[] {
  * Finds an own `__proto__` / `constructor` / `prototype` KEY anywhere in untrusted
  * JSON. zod silently drops an own `__proto__` key from records, so without this
  * scan such a key would disappear instead of failing validation.
- * Returns the JSON path of the first offender, or null.
+ * Returns the JSON path of the first offender (depth-first, in key order), or null.
+ * Iterative: arbitrarily deep input cannot overflow the call stack.
  */
 export function findReservedKey(value: unknown, path: (string | number)[] = []): string | null {
-  if (Array.isArray(value)) {
-    for (let i = 0; i < value.length; i++) {
-      const hit = findReservedKey(value[i], [...path, i]);
-      if (hit) return hit;
+  // Each entry is "visit this key (object keys are checked when visited), then its value".
+  // Paths are rebuilt from parent links only for the offender (no per-node path copies).
+  const links: { parent: number; key: string | number }[] = [];
+  const pathOf = (i: number) => {
+    const out: (string | number)[] = [];
+    for (; i >= 0; i = links[i]!.parent) out.unshift(links[i]!.key);
+    return [...path, ...out];
+  };
+  const stack: { value: unknown; link: number; objectKey: boolean }[] = [{ value, link: -1, objectKey: false }];
+  while (stack.length > 0) {
+    const { value: v, link, objectKey } = stack.pop()!;
+    if (objectKey && RESERVED_IDS.has(links[link]!.key as string)) return formatPath(pathOf(link));
+    if (Array.isArray(v)) {
+      for (let i = v.length - 1; i >= 0; i--) stack.push({ value: v[i], link: links.push({ parent: link, key: i }) - 1, objectKey: false });
+    } else if (v !== null && typeof v === 'object') {
+      const keys = Object.keys(v);
+      for (let i = keys.length - 1; i >= 0; i--) {
+        const key = keys[i]!;
+        stack.push({ value: (v as Record<string, unknown>)[key], link: links.push({ parent: link, key }) - 1, objectKey: true });
+      }
     }
-    return null;
   }
-  if (value === null || typeof value !== 'object') return null;
-  for (const key of Object.keys(value)) {
-    if (RESERVED_IDS.has(key)) return formatPath([...path, key]);
-    const hit = findReservedKey((value as Record<string, unknown>)[key], [...path, key]);
-    if (hit) return hit;
+  return null;
+}
+
+/**
+ * Returns the JSON path of the first value nested deeper than `maxDepth` objects/arrays,
+ * or null. Iterative, so it is safe on hostile input; run it BEFORE anything recursive
+ * (structuredClone in migrateDocument, zod, findReservedKey) sees untrusted JSON.
+ */
+export function findExcessiveNesting(value: unknown, maxDepth: number = MAX_JSON_DEPTH): string | null {
+  const stack: { value: unknown; depth: number; parent: number; key: string | number }[] = [{ value, depth: 0, parent: -1, key: '' }];
+  // Parent links, so a path is only built for the offender.
+  const nodes: { parent: number; key: string | number }[] = [];
+  while (stack.length > 0) {
+    const entry = stack.pop()!;
+    const v = entry.value;
+    if (v === null || typeof v !== 'object') continue;
+    const index = nodes.push({ parent: entry.parent, key: entry.key }) - 1;
+    const depth = entry.depth + 1;
+    if (depth > maxDepth) {
+      const path: (string | number)[] = [];
+      for (let i = index; i > 0; i = nodes[i]!.parent) path.unshift(nodes[i]!.key);
+      return formatPath(path);
+    }
+    if (Array.isArray(v)) {
+      for (let i = v.length - 1; i >= 0; i--) stack.push({ value: v[i], depth, parent: index, key: i });
+    } else {
+      const keys = Object.keys(v);
+      for (let i = keys.length - 1; i >= 0; i--) stack.push({ value: (v as Record<string, unknown>)[keys[i]!], depth, parent: index, key: keys[i]! });
+    }
   }
   return null;
 }

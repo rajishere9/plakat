@@ -4,6 +4,7 @@ import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { loadConfig } from './config.ts';
 import { runMigrations } from './db/index.ts';
+import { HTML_CSP } from './security.ts';
 import { createTestApp, type TestApp } from './test-utils.ts';
 
 let t: TestApp;
@@ -32,6 +33,13 @@ describe('app', () => {
     const asset = await t.app.inject({ method: 'GET', url: '/assets/app-123.js' });
     expect(asset.statusCode).toBe(200);
     expect(asset.headers['cache-control']).toBe('public, max-age=31536000, immutable');
+    // Anti-framing + CSP on the SPA shell (index and the deep-link fallback).
+    for (const r of [root, deep]) {
+      expect(r.headers['content-security-policy']).toBe(HTML_CSP);
+      expect(r.headers['content-security-policy']).toContain("frame-ancestors 'self'");
+      expect(r.headers['x-frame-options']).toBe('SAMEORIGIN');
+      expect(r.headers['referrer-policy']).toBe('same-origin');
+    }
     const api = await t.app.inject({ method: 'GET', url: '/api/unknown' });
     expect(api.statusCode).toBe(404);
     expect(api.json().error.code).toBe('not_found');
@@ -60,11 +68,19 @@ describe('app', () => {
 describe('loadConfig', () => {
   it('defaults', () => {
     const c = loadConfig({});
-    expect(c).toMatchObject({ port: 8787, host: '0.0.0.0', databaseUrl: null, webDist: null, publicUrl: null });
+    expect(c).toMatchObject({ port: 8787, host: '127.0.0.1', databaseUrl: null, webDist: null, publicUrl: null, allowedHosts: [], basicAuth: null });
     expect(c.pglite).toBe(path.resolve('data/pglite'));
     expect(c.uploadDir).toBe(path.resolve('data/uploads'));
     expect(c.templatesDir.endsWith(`${path.sep}templates`)).toBe(true);
     expect(c.openverse).toEqual({ clientId: null, clientSecret: null, apiBase: 'https://api.openverse.org' });
+  });
+  it('binds to loopback unless HOST is set; parses ALLOWED_HOSTS and BASIC_AUTH', () => {
+    expect(loadConfig({}).host).toBe('127.0.0.1');
+    expect(loadConfig({ HOST: '0.0.0.0' }).host).toBe('0.0.0.0');
+    expect(loadConfig({ ALLOWED_HOSTS: 'A.example, .b.example' }).allowedHosts).toEqual(['a.example', '.b.example']);
+    expect(loadConfig({ ALLOWED_HOSTS: '*' }).allowedHosts).toBe('*');
+    expect(loadConfig({ BASIC_AUTH: 'me:pa:ss' }).basicAuth).toEqual({ user: 'me', password: 'pa:ss' });
+    expect(() => loadConfig({ BASIC_AUTH: 'nopassword' })).toThrow(/BASIC_AUTH/);
   });
   it('env overrides', () => {
     const c = loadConfig({ PORT: '9000', DATABASE_URL: 'postgres://x', PGLITE: 'memory', DATA_DIR: '/data', OPENVERSE_CLIENT_ID: 'a', OPENVERSE_CLIENT_SECRET: 'b' });

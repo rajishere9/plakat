@@ -1,5 +1,6 @@
 import { isValidId } from '@plakat/schema';
 import type { ProviderRegistry } from './assets/provider.ts';
+import type { RemoteAssetImporter } from './assets/remote.ts';
 import type { Config } from './config.ts';
 import type { Db } from './db/index.ts';
 import { HttpError, notFound } from './errors.ts';
@@ -12,6 +13,8 @@ export interface AppContext {
   db: Db;
   uploads: UploadStore;
   providers: ProviderRegistry;
+  /** Downloads remote asset srcs of incoming documents into uploads. */
+  remoteAssets: RemoteAssetImporter;
   fetch: typeof fetch;
   resolveHost: HostResolver;
   now: () => Date;

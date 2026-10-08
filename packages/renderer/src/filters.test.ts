@@ -7,7 +7,9 @@ import { describe, expect, it } from 'vitest';
 import pixelmatch from 'pixelmatch';
 import { DEFAULT_FILTERS, customPageSize, exportPixelSize, type PlakatDocument } from '@plakat/schema';
 import { fixtureAssets } from './fixture-docs.ts';
-import { cacheFilteredNode, filterCacheOffset, hasActiveFilters, konvaFilterList, konvaSaturation } from './filters.ts';
+import { cacheFilteredNode, filterCacheOffset, hasActiveFilters, konvaFilterList, konvaSaturation, planFilterCache } from './filters.ts';
+import { CanvasLimitError } from './errors.ts';
+import type { CanvasLimits } from '@plakat/schema';
 import { Konva, type KonvaGroup, type KonvaImage } from './konva.ts';
 import { prepareResources } from './resources.ts';
 import { rasterizePage } from './rasterize.ts';
@@ -149,4 +151,90 @@ describe('filter cache truncation (§6.1.5)', () => {
       scene.destroy();
     });
   }
+});
+
+describe('filter cache size limits (P-7): never a silently missing filtered image', () => {
+  /** Device size of a node's filter cache bitmap. */
+  function cacheBitmap(node: KonvaImage): { width: number; height: number } {
+    const cache = (node as unknown as { _getCanvasCache(): { scene: { _canvas: { width: number; height: number } } } })._getCanvasCache();
+    return { width: cache.scene._canvas.width, height: cache.scene._canvas.height };
+  }
+
+  function bigImageDoc(pageSide: number, p: Parameters<typeof image>[2]): PlakatDocument {
+    return makeDoc(customPageSize(pageSide, pageSide), [page('pg_1', [image('el_img', 'as_photo', { filters: { grayscale: true }, ...p })], { color: '#ffffff', image: null })], {
+      as_photo: fixtureAssets()['as_photo']!,
+    });
+  }
+
+  const centerPixel = (buf: Uint8Array, w: number, h: number) => {
+    const i = (Math.floor(h / 2) * w + Math.floor(w / 2)) * 4;
+    return [buf[i]!, buf[i + 1]!, buf[i + 2]!, buf[i + 3]!];
+  };
+
+  it('a node much larger than the page is cached only where the page can show it', async () => {
+    const limits: CanvasLimits = { maxSide: 32_767, maxArea: 250_000 };
+    const doc = bigImageDoc(100, { x: -200, y: -500, width: 1000, height: 1000 });
+    const resources = await prepareResources(doc, undefined, env);
+    const scene = new PageScene({ doc, pageId: 'pg_1', resources, pixelRatio: 1, canvasLimits: limits });
+    const bmp = cacheBitmap(imageNode(scene, 'el_img'));
+    expect(bmp.width * bmp.height).toBeLessThanOrEqual(limits.maxArea);
+    expect(bmp.width).toBeLessThan(200); // the page (100 px) + blur/offset padding, not 1000
+    scene.destroy();
+  });
+
+  for (const scale of [1, 2, 3.125]) {
+    // Integer ratios: byte-identical. Fractional ratios: the page's contentScale moves the
+    // cropped cache by a sub-pixel amount, so channels may differ by 1 level (rounding).
+    it(`cropping the cache to the page does not visibly change pixels (@ ${scale})`, T, async () => {
+      const doc = bigImageDoc(100, { x: -203.3, y: -497.1, width: 1000, height: 1000, filters: { grayscale: true, blur: 3 } });
+      const full = await renderPageCanvas(doc, 'pg_1', { scale, env });
+      const limits: CanvasLimits = { maxSide: 32_767, maxArea: Math.ceil(400 * scale) ** 2 };
+      const cropped = await renderPageCanvas(doc, 'pg_1', { scale, env, canvasLimits: limits });
+      const resources = await prepareResources(doc, undefined, env);
+      const probe = new PageScene({ doc, pageId: 'pg_1', resources, pixelRatio: scale, canvasLimits: limits });
+      expect(planFilterCache(imageNode(probe, 'el_img'), scale, { limits, visible: { x: 0, y: 0, width: 1, height: 1 } })!.cropped).toBe(true);
+      probe.destroy();
+      const a = rgba(full.canvas);
+      const b = rgba(cropped.canvas);
+      let maxDiff = 0;
+      for (let i = 0; i < a.length; i++) maxDiff = Math.max(maxDiff, Math.abs(a[i]! - b[i]!));
+      if (Number.isInteger(scale)) expect(countDiffBytes(a, b)).toBe(0);
+      else expect(maxDiff).toBeLessThanOrEqual(1);
+      full.release();
+      cropped.release();
+    });
+  }
+
+  it('editor: at extreme zoom the cache ratio is clamped to the budget and the image stays visible', async () => {
+    const limits: CanvasLimits = { maxSide: 32_767, maxArea: 250_000 };
+    const doc = bigImageDoc(100, { x: 0, y: 0, width: 100, height: 100 });
+    const resources = await prepareResources(doc, undefined, env);
+    const scene = new PageScene({ doc, pageId: 'pg_1', resources, pixelRatio: 1, canvasLimits: limits });
+    scene.setPixelRatio(16); // zoom 8 × dpr 2: the whole cache would be 1632² px
+    const node = imageNode(scene, 'el_img');
+    const bmp = cacheBitmap(node);
+    expect(bmp.width * bmp.height).toBeLessThanOrEqual(limits.maxArea);
+    expect(bmp.width).toBeGreaterThan(400); // still well above 1x
+    const raster = rasterizePage(scene, 1);
+    const [r, g, b, a] = centerPixel(rgba(raster), raster.width, raster.height);
+    Konva.Util.releaseCanvas(raster);
+    expect(a).toBe(255);
+    expect(r).toBe(g);
+    expect(g).toBe(b);
+    expect(r).toBeLessThan(250); // the grayscale photo, not the white page
+    scene.destroy();
+  });
+
+  it('export refuses (CanvasLimitError) instead of writing a file without the filtered image', T, async () => {
+    // page 400² fits the limits; the filtered image's cache, even cropped to the page, does not
+    const limits: CanvasLimits = { maxSide: 32_767, maxArea: 170_000 };
+    const doc = bigImageDoc(400, { x: -300, y: -300, width: 1000, height: 1000, filters: { grayscale: true, blur: 20 } });
+    await expect(renderPageCanvas(doc, 'pg_1', { scale: 1, env, canvasLimits: limits })).rejects.toBeInstanceOf(CanvasLimitError);
+    await expect(renderPageCanvas(doc, 'pg_1', { scale: 1, env, canvasLimits: limits })).rejects.toThrow(/filter cache/);
+    // the same image cropped to the page fits more generous limits, and renders
+    const ok = await renderPageCanvas(doc, 'pg_1', { scale: 1, env, canvasLimits: { maxSide: 32_767, maxArea: 250_000 } });
+    const [r, g, b, a] = centerPixel(rgba(ok.canvas), ok.width, ok.height);
+    ok.release();
+    expect([a, r === g && g === b]).toEqual([255, true]);
+  });
 });

@@ -4,8 +4,8 @@
  *   window.addEventListener('keydown', onKeyDown);
  * Optional system-clipboard integration: createClipboardEventHandlers().
  */
-import { CLIPBOARD_MIME, parseClipboard, serializeClipboard } from '../lib/clipboard.ts';
-import { matchShortcut, type Platform, type ShortcutId, type ShortcutMatch } from '../lib/shortcuts.ts';
+import { CLIPBOARD_MIME, clipboardHtml, clipboardPlainText, parseClipboard, parseClipboardHtml, serializeClipboard } from '../lib/clipboard.ts';
+import { isEditableTarget, matchShortcut, type Platform, type ShortcutId, type ShortcutMatch } from '../lib/shortcuts.ts';
 import { editorStore, type EditorStore } from './editor-store.ts';
 
 export interface ShortcutHandlerOptions {
@@ -146,14 +146,25 @@ export interface ClipboardEventHandlerOptions {
   store?: EditorStore;
   /** Image files pasted from the OS (screenshots, copied files): upload + addImage them. */
   onPasteFiles?: (files: File[]) => void;
+  /**
+   * Plain text pasted from another app (no Plakat payload): default adds it as a text
+   * element on the active page. Return value ignored.
+   */
+  onPasteText?: (text: string) => void;
   /** Ignore events whose target is editable (default true). */
   ignoreEditable?: boolean;
 }
 
+/** Longest external text accepted as one pasted text element. */
+export const MAX_PASTED_TEXT = 10_000;
+
 /**
  * document-level copy/cut/paste listeners that sync the internal clipboard with the
- * system clipboard (custom MIME + text/plain JSON), so elements paste across tabs and
- * documents. Use together with `createShortcutHandler({ nativeClipboard: true })`.
+ * system clipboard, so elements paste across tabs and documents. The payload travels
+ * under the custom MIME type (and inside text/html as a fallback); text/plain only gets
+ * the copied text, never the JSON. Pasting non-Plakat text adds a text element; the
+ * internal clipboard is used only when the system clipboard has nothing usable.
+ * Use together with `createShortcutHandler({ nativeClipboard: true })`.
  */
 export function createClipboardEventHandlers(options: ClipboardEventHandlerOptions = {}): {
   onCopy: (e: ClipboardEvent) => void;
@@ -161,39 +172,63 @@ export function createClipboardEventHandlers(options: ClipboardEventHandlerOptio
   onPaste: (e: ClipboardEvent) => void;
 } {
   const store = options.store ?? editorStore;
-  const editable = (e: Event) => {
-    if (options.ignoreEditable === false) return false;
-    const t = e.target as { tagName?: string; isContentEditable?: boolean } | null;
-    return !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable === true);
-  };
+  const editable = (e: Event) => options.ignoreEditable !== false && isEditableTarget(e.target);
   const write = (e: ClipboardEvent, cut: boolean) => {
     if (editable(e)) return;
     const a = store.getState().actions;
     const data = cut ? a.cut() : a.copy();
     if (!data || !e.clipboardData) return;
-    const text = serializeClipboard(data);
-    e.clipboardData.setData(CLIPBOARD_MIME, text);
-    e.clipboardData.setData('text/plain', text);
+    e.clipboardData.setData(CLIPBOARD_MIME, serializeClipboard(data));
+    e.clipboardData.setData('text/html', clipboardHtml(data));
+    e.clipboardData.setData('text/plain', clipboardPlainText(data));
     e.preventDefault();
+  };
+  const pasteText = (text: string) => {
+    if (options.onPasteText) return options.onPasteText(text);
+    const a = store.getState().actions;
+    a.addText({ preset: 'body', content: text });
   };
   return {
     onCopy: (e) => write(e, false),
     onCut: (e) => write(e, true),
     onPaste: (e) => {
-      if (editable(e) || !e.clipboardData) return;
-      const files = Array.from(e.clipboardData.files ?? []).filter((f) => f.type.startsWith('image/'));
+      if (editable(e)) return;
+      const a = store.getState().actions;
+      const dt = e.clipboardData;
+      if (!dt) {
+        if (store.getState().clipboard) {
+          e.preventDefault();
+          a.paste();
+        }
+        return;
+      }
+      const files = Array.from(dt.files ?? []).filter((f) => f.type.startsWith('image/'));
       if (files.length && options.onPasteFiles) {
         e.preventDefault();
         options.onPasteFiles(files);
         return;
       }
-      const text = e.clipboardData.getData(CLIPBOARD_MIME) || e.clipboardData.getData('text/plain');
-      const data = text ? parseClipboard(text) : null;
-      const a = store.getState().actions;
+      const custom = dt.getData(CLIPBOARD_MIME);
+      const html = dt.getData('text/html');
+      const plain = dt.getData('text/plain');
+      const data = (custom && parseClipboard(custom)) || (html && parseClipboardHtml(html)) || (plain && parseClipboard(plain)) || null;
       if (data) {
         e.preventDefault();
         a.paste(data);
-      } else if (store.getState().clipboard) {
+        return;
+      }
+      const text = plain.replace(/\r\n?/g, '\n');
+      if (text.trim()) {
+        // Something was copied elsewhere after our last copy: it wins over the stale internal clipboard.
+        e.preventDefault();
+        if (store.getState().clipboard) store.setState({ clipboard: null });
+        pasteText(text.length > MAX_PASTED_TEXT ? text.slice(0, MAX_PASTED_TEXT) : text);
+        return;
+      }
+      // Unusable foreign content (unknown payload version, HTML without text, …): do nothing
+      // rather than pasting a stale internal copy. Only an empty clipboard falls back.
+      if (custom || html || files.length) return;
+      if (store.getState().clipboard) {
         e.preventDefault();
         a.paste();
       }

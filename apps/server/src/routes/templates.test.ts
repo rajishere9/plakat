@@ -123,19 +123,19 @@ describe('built-in template seeding', () => {
 
 describe('user templates', () => {
   it('CRUD with kind validation', async () => {
-    const tpl = buildTemplate('tpl_user_card', 'Business card', 'print/card');
+    const tpl = buildTemplate('doc_user_card', 'Business card', 'print/card');
     const created = await t.app.inject({ method: 'POST', url: '/api/templates', payload: { document: tpl } });
     expect(created.statusCode).toBe(201);
-    expect(created.json()).toMatchObject({ id: 'tpl_user_card', builtIn: false, version: 1 });
+    expect(created.json()).toMatchObject({ id: 'doc_user_card', builtIn: false, version: 1 });
 
     const edited = { ...tpl, meta: { ...tpl.meta, title: 'Card v2' } };
-    const put = await t.app.inject({ method: 'PUT', url: '/api/templates/tpl_user_card', payload: { document: edited } });
+    const put = await t.app.inject({ method: 'PUT', url: '/api/templates/doc_user_card', payload: { document: edited } });
     expect(put.statusCode).toBe(200);
-    expect(put.json()).toMatchObject({ id: 'tpl_user_card', version: 2 });
-    const stale = await t.app.inject({ method: 'PUT', url: '/api/templates/tpl_user_card', payload: { document: edited, baseVersion: 1 } });
+    expect(put.json()).toMatchObject({ id: 'doc_user_card', version: 2 });
+    const stale = await t.app.inject({ method: 'PUT', url: '/api/templates/doc_user_card', payload: { document: edited, baseVersion: 1 } });
     expect(stale.statusCode).toBe(409);
 
-    const got = await t.app.inject({ method: 'GET', url: '/api/templates/tpl_user_card' });
+    const got = await t.app.inject({ method: 'GET', url: '/api/templates/doc_user_card' });
     expect(got.json()).toMatchObject({ builtIn: false, document: { meta: { title: 'Card v2' }, kind: 'template' } });
 
     const design = createDocument('a4-poster');
@@ -147,20 +147,20 @@ describe('user templates', () => {
     expect(invalid.statusCode).toBe(400);
     expect(invalid.json().error.issues.length).toBeGreaterThan(0);
 
-    const del = await t.app.inject({ method: 'DELETE', url: '/api/templates/tpl_user_card' });
+    const del = await t.app.inject({ method: 'DELETE', url: '/api/templates/doc_user_card' });
     expect(del.statusCode).toBe(204);
-    expect((await t.app.inject({ method: 'GET', url: '/api/templates/tpl_user_card' })).statusCode).toBe(404);
+    expect((await t.app.inject({ method: 'GET', url: '/api/templates/doc_user_card' })).statusCode).toBe(404);
   });
 
   it('filters by category (prefix) and q', async () => {
-    await t.app.inject({ method: 'POST', url: '/api/templates', payload: { document: buildTemplate('tpl_poster', 'Concert poster', 'print/poster') } });
+    await t.app.inject({ method: 'POST', url: '/api/templates', payload: { document: buildTemplate('doc_poster', 'Concert poster', 'print/poster') } });
     const ids = async (qs: string) =>
       ((await t.app.inject({ method: 'GET', url: `/api/templates${qs}` })).json().items as { id: string }[]).map((i) => i.id).sort();
-    expect(await ids('?category=print')).toEqual(['tpl_poster']);
-    expect(await ids('?category=print/poster')).toEqual(['tpl_poster']);
+    expect(await ids('?category=print')).toEqual(['doc_poster']);
+    expect(await ids('?category=print/poster')).toEqual(['doc_poster']);
     expect(await ids('?category=prin')).toEqual([]);
-    expect(await ids('?q=CONCERT')).toEqual(['tpl_poster']);
-    expect(await ids('?q=summer')).toEqual(['tpl_builtin_sale', 'tpl_poster'].sort()); // tags
+    expect(await ids('?q=CONCERT')).toEqual(['doc_poster']);
+    expect(await ids('?q=summer')).toEqual(['tpl_builtin_sale', 'doc_poster'].sort()); // tags
     expect(await ids('?q=sale%20summer')).toEqual(['tpl_builtin_sale']);
     expect(await ids('?q=%25')).toEqual([]);
   });
@@ -203,20 +203,42 @@ describe('portable export / import', () => {
   it('rejects invalid imports', async () => {
     const bad = await t.app.inject({ method: 'POST', url: '/api/templates/import', headers: { 'content-type': 'application/json' }, payload: '{"nope":1}' });
     expect(bad.statusCode).toBe(400);
-    const notJson = await t.app.inject({ method: 'POST', url: '/api/templates/import', headers: { 'content-type': 'text/plain' }, payload: 'nope' });
+    const notJson = await t.app.inject({ method: 'POST', url: '/api/templates/import', headers: { 'content-type': 'application/json' }, payload: 'nope' });
     expect(notJson.statusCode).toBe(400);
+    expect(notJson.json().error.code).toBe('invalid_json');
+    // text/plain is a CORS "simple" content type (cross-site POST without preflight): refused.
+    const textPlain = await t.app.inject({
+      method: 'POST',
+      url: '/api/templates/import',
+      headers: { 'content-type': 'text/plain' },
+      payload: serializeDocument(buildTemplate('doc_textplain', 'Text plain', 'x')),
+    });
+    expect(textPlain.statusCode).toBe(415);
+    expect(textPlain.json().error.code).toBe('unsupported_media_type');
+    expect((await t.app.inject({ method: 'GET', url: '/api/templates/doc_textplain' })).statusCode).toBe(404);
     const design = await t.app.inject({ method: 'POST', url: '/api/templates/import', headers: { 'content-type': 'application/json' }, payload: serializeDocument(createDocument()) });
     expect(design.statusCode).toBe(400);
     expect(design.json().error.code).toBe('not_a_template');
   });
 
-  it('refuses to bundle remote assets (never fetched server-side)', async () => {
-    const tpl = buildTemplate('tpl_remote', 'Remote', 'x');
+  it('refuses to bundle srcs that are not uploads (never fetched server-side)', async () => {
+    const tpl = buildTemplate('doc_rootrel', 'Root relative', 'x');
     const assetId = Object.keys(tpl.assets)[0]!;
-    tpl.assets[assetId] = { ...tpl.assets[assetId]!, src: 'http://169.254.169.254/latest/meta-data.png' };
-    expect((await t.app.inject({ method: 'POST', url: '/api/templates', payload: { document: tpl } })).statusCode).toBe(201);
-    const res = await t.app.inject({ method: 'GET', url: '/api/templates/tpl_remote/file' });
+    tpl.assets[assetId] = { ...tpl.assets[assetId]!, src: '/not-an-upload/x.png' };
+    const created = await t.app.inject({ method: 'POST', url: '/api/templates', payload: { document: tpl } });
+    expect(created.statusCode).toBe(201);
+    const res = await t.app.inject({ method: 'GET', url: `/api/templates/${created.json().id}/file` });
     expect(res.statusCode).toBe(422);
     expect(res.json().error.code).toBe('asset_not_bundlable');
+  });
+
+  it('refuses remote srcs on private addresses (SSRF) with 422 naming the asset', async () => {
+    const tpl = buildTemplate('doc_remote_private', 'Remote', 'x');
+    const assetId = Object.keys(tpl.assets)[0]!;
+    tpl.assets[assetId] = { ...tpl.assets[assetId]!, src: 'http://169.254.169.254/latest/meta-data.png' };
+    const res = await t.app.inject({ method: 'POST', url: '/api/templates', payload: { document: tpl } });
+    expect(res.statusCode).toBe(422);
+    expect(res.json().error).toMatchObject({ code: 'asset_fetch_failed', assetId });
+    expect((await t.app.inject({ method: 'GET', url: '/api/templates/doc_remote_private' })).statusCode).toBe(404);
   });
 });

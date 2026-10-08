@@ -1,7 +1,7 @@
 import { createId, loadBrandKit, type BrandKit } from '@plakat/schema';
 import type { FastifyInstance } from 'fastify';
 import { bodyField, idParam, type AppContext } from '../context.ts';
-import { internalizeAssets } from '../documents.ts';
+import { internalizeAssets, sanitizeJsonStrings } from '../documents.ts';
 import { HttpError, notFound, schemaErrorToHttp } from '../errors.ts';
 
 function parseKit(input: unknown): BrandKit {
@@ -9,7 +9,7 @@ function parseKit(input: unknown): BrandKit {
     throw new HttpError(400, 'invalid_brand_kit', 'Expected a brand kit object');
   }
   try {
-    return loadBrandKit(input);
+    return loadBrandKit(sanitizeJsonStrings(input));
   } catch (error) {
     const http = schemaErrorToHttp(error);
     if (http) throw new HttpError(http.statusCode, http.statusCode === 400 ? 'invalid_brand_kit' : http.code, http.message, http.extra);
@@ -19,7 +19,7 @@ function parseKit(input: unknown): BrandKit {
 
 async function prepare(ctx: AppContext, raw: unknown, id?: string): Promise<BrandKit> {
   const kit = parseKit(raw);
-  return { ...kit, id: id ?? kit.id, assets: await internalizeAssets(kit.assets, ctx.uploads) };
+  return { ...kit, id: id ?? kit.id, assets: await internalizeAssets(kit.assets, ctx.uploads, { remote: ctx.remoteAssets }) };
 }
 
 export function registerBrandKitRoutes(app: FastifyInstance, ctx: AppContext): void {

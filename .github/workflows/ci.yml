@@ -1,0 +1,99 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  check:
+    name: Typecheck, unit tests, build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Unit tests
+        run: npm test
+      - name: Built-in templates are up to date
+        run: npm run templates:check
+      - name: Build the editor
+        run: npm run build
+
+  e2e:
+    name: End-to-end (Playwright, Chromium)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Run e2e suite
+        # Builds apps/web, then starts e2e/server.mjs (real server, in-memory PGlite).
+        run: npm run test:e2e
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7
+
+  docker:
+    name: Docker image and compose
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate docker-compose.yml
+        run: docker compose config --quiet
+      - name: Build image
+        run: docker build -t plakat:latest .
+      - name: Smoke test (embedded PGlite)
+        run: |
+          docker run -d --name plakat-smoke -p 127.0.0.1:8787:8787 plakat:latest
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8787/api/health; then break; fi
+            sleep 2
+          done
+          curl -fsS -o health.json http://127.0.0.1:8787/api/health && grep -q '"db":"pglite"' health.json
+          curl -fsS -o index.html http://127.0.0.1:8787/ && grep -qi '<!doctype html>' index.html
+          curl -fsS -o templates.json http://127.0.0.1:8787/api/templates && grep -q '"builtIn":true' templates.json
+      - name: Container logs
+        if: always()
+        run: docker logs plakat-smoke || true
+      - name: Stop container
+        if: always()
+        run: docker rm -f plakat-smoke || true
+      - name: Smoke test (compose with PostgreSQL)
+        run: |
+          docker compose up -d --no-build --wait --wait-timeout 180
+          curl -fsS -o health.json http://127.0.0.1:8787/api/health && grep -q '"db":"postgres"' health.json
+          curl -fsS -o templates.json http://127.0.0.1:8787/api/templates && grep -q '"builtIn":true' templates.json
+      - name: Compose logs
+        if: always()
+        run: docker compose logs || true
+      - name: Stop compose
+        if: always()
+        run: docker compose down -v || true

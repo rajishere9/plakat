@@ -20,6 +20,8 @@ import {
   createEmptyResources,
   createPageFrame,
   editorPixelRatio,
+  FontLoadError,
+  invalidateTextMeasurements,
   encodeCanvasDefault,
   getElementIdFromNode,
   getPageIdFromNode,
@@ -30,7 +32,10 @@ import {
   type Resources,
 } from '@plakat/renderer';
 import {
+  collectFonts,
+  fontLoadRequests,
   referencedAssetIds,
+  type FontLoadRequest,
   type ExportScaleId,
   type Id,
   type NodeTransform,
@@ -167,6 +172,15 @@ const LABEL_COLOR = '#5f6470';
 const CHROME_FONT = 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
 const RATIO_DEBOUNCE_MS = 150;
 const FOLLOW_PAGE_DEBOUNCE_MS = 200;
+/** Poll interval for fonts that missed the readiness barrier (besides document.fonts 'loadingdone'). */
+const FONT_RETRY_MS = 3000;
+/** Text fields that change a text's laid-out height (refit after any edit of these). */
+const TEXT_LAYOUT_KEYS = ['content', 'fontSize', 'fontFamily', 'fontWeight', 'fontStyle', 'lineHeight', 'letterSpacing', 'width', 'textTransform'] as const;
+
+/** Same label format the renderer uses in FontLoadError.missing. */
+function fontVariantLabel(r: Pick<FontLoadRequest, 'family' | 'weight' | 'style'>): string {
+  return `"${r.family}" ${r.style} ${r.weight}`;
+}
 const CORNERS: CropAnchor[] = ['top-left', 'top-right', 'bottom-left', 'bottom-right'];
 
 interface PageEntry {
@@ -191,6 +205,8 @@ type Gesture =
       others: ReturnType<typeof getSnapTargets>;
       dx: number;
       dy: number;
+      /** Last pointer position (screen px): the drop page is the page under it. */
+      last: Point;
     }
   | { kind: 'inert'; pointerId: number }
   | {
@@ -201,6 +217,8 @@ type Gesture =
       additive: boolean;
       moved: boolean;
       ids: Id[];
+      /** Started on a locked element: a click without movement selects it. */
+      lockedHit?: Id;
     };
 
 interface TransformGesture {
@@ -219,6 +237,23 @@ interface CropUi {
   transformer: Transformer;
   startRect: { x: number; y: number; width: number; height: number };
   cancelled: boolean;
+}
+
+/** Text elements added, or whose layout fields changed, in a commit. */
+function textLayoutChanges(prev: PlakatDocument, next: PlakatDocument, change: DocumentChange): Id[] {
+  if (change.ids.length === 0) return [];
+  const want = new Set(change.ids);
+  const before = new Map<Id, PlakatElement>();
+  for (const p of prev.pages) for (const e of p.elements) if (want.has(e.id)) before.set(e.id, e);
+  const out: Id[] = [];
+  for (const p of next.pages) {
+    for (const e of p.elements) {
+      if (!want.has(e.id) || e.type !== 'text') continue;
+      const old = before.get(e.id);
+      if (!old || old.type !== 'text' || TEXT_LAYOUT_KEYS.some((k) => old[k] !== e[k])) out.push(e.id);
+    }
+  }
+  return out;
 }
 
 function isDescendantOf(node: KonvaNode | null, ancestor: KonvaNode | null | undefined): boolean {
@@ -279,6 +314,9 @@ export class WorkspaceController {
   private readonly guides: Group;
   private readonly labels: Group;
   private readonly marquee: KonvaRect;
+  private readonly dropTarget: KonvaRect;
+  private pendingCaret: { id: Id; x: number; y: number } | null = null;
+  private fontRetry: { busy: boolean; dispose: () => void } | null = null;
 
   private resources: Resources = createEmptyResources();
   private doc: PlakatDocument;
@@ -339,6 +377,15 @@ export class WorkspaceController {
       strokeWidth: 1,
       strokeScaleEnabled: false,
     });
+    this.dropTarget = new Konva.Rect({
+      name: 'plakat-drop-target',
+      visible: false,
+      listening: false,
+      stroke: ACCENT,
+      strokeWidth: 2,
+      strokeScaleEnabled: false,
+      dash: [6, 4],
+    });
     this.transformer = new Konva.Transformer({
       name: 'plakat-transformer',
       flipEnabled: false,
@@ -357,7 +404,7 @@ export class WorkspaceController {
       ...rotationSnapConfig(false),
       boundBoxFunc: (oldBox: Box, newBox: Box) => this.boundBox(oldBox, newBox),
     });
-    this.chromeLayer.add(this.labels, this.outlines, this.guides, this.marquee, this.transformer);
+    this.chromeLayer.add(this.labels, this.outlines, this.guides, this.marquee, this.dropTarget, this.transformer);
     this.transformer.on('transformstart', () => this.onTransformStart());
     this.transformer.on('transform', () => this.onTransform());
     this.transformer.on('transformend', () => this.onTransformEnd());
@@ -508,14 +555,122 @@ export class WorkspaceController {
    * step). Returns true when it changed.
    */
   autoGrowText(id: Id): boolean {
-    const hit = this.lookup(id);
-    if (!hit || hit.element.type !== 'text') return false;
-    const m = this.measureText(hit.element);
-    if (m.height > hit.element.height + 0.5) {
-      this.store.getState().actions.updateElement(id, { height: Math.ceil(m.height * 100) / 100 }, { merge: true });
-      return true;
+    return this.growTextsToFit([id]).length > 0;
+  }
+
+  /**
+   * Grows every listed text whose measured height exceeds its box (never shrinks: vertical
+   * alignment relies on extra height), in ONE commit merged into the previous undo step.
+   * Returns the ids that changed.
+   */
+  growTextsToFit(ids: Iterable<Id>): Id[] {
+    if (this.destroyed) return [];
+    const heights = new Map<Id, number>();
+    for (const id of new Set(ids)) {
+      const hit = this.lookup(id);
+      if (!hit || hit.element.type !== 'text' || hit.element.locked) continue;
+      const m = this.measureText(hit.element);
+      if (m.height > hit.element.height + 0.5) heights.set(id, Math.ceil(m.height * 100) / 100);
     }
-    return false;
+    if (heights.size === 0) return [];
+    const changed = [...heights.keys()];
+    this.store.getState().actions.updateElements(changed, (el) => ({ height: heights.get(el.id)! }), { merge: true, label: 'Fit text' });
+    return changed;
+  }
+
+  /**
+   * Automatic refit (after an edit, a late font, a rebuilt text): only while the last
+   * document change is a user commit. After undo/redo/load it would push a new history
+   * entry (dropping the redo stack) or dirty a freshly opened document.
+   */
+  private refitAfterEdit(ids: Id[]): void {
+    if (this.store.getState().lastChange?.source !== 'commit') return;
+    this.growTextsToFit(ids);
+  }
+
+  /** The double-click point (container px) that opened inline editing of `id`, consumed once. */
+  takeTextEditCaret(id: Id): Point | null {
+    const c = this.pendingCaret;
+    this.pendingCaret = null;
+    return c && c.id === id ? { x: c.x, y: c.y } : null;
+  }
+
+  /**
+   * Fonts that missed the readiness barrier (timeout / slow network): retries them, and when
+   * they become available rebuilds the affected text nodes with the real metrics, refits their
+   * boxes and clears them from `missingFonts`, so the canvas matches what export will draw.
+   * Called automatically (document.fonts 'loadingdone' + polling); public for tests.
+   */
+  async retryMissingFonts(): Promise<string[]> {
+    const w = this.fontRetry;
+    if (this.destroyed || (w && w.busy)) return [];
+    const missing = new Set(this.resources.missingFonts);
+    if (missing.size === 0) {
+      this.stopFontWatch();
+      return [];
+    }
+    const doc = this.doc;
+    const resources = this.resources;
+    const requests = fontLoadRequests(doc).filter((r) => missing.has(fontVariantLabel(r)));
+    if (requests.length === 0) return [];
+    const families = new Set(requests.map((r) => r.family));
+    if (w) w.busy = true;
+    let still: string[] = [];
+    try {
+      await this.env.loadFonts(
+        collectFonts({ pages: doc.pages, fonts: doc.fonts }).filter((f) => families.has(f.family)),
+        requests,
+      );
+    } catch (err) {
+      still = err instanceof FontLoadError ? err.missing : requests.map(fontVariantLabel);
+    } finally {
+      if (w) w.busy = false;
+    }
+    if (this.destroyed || resources !== this.resources) return [];
+    const recovered = requests.filter((r) => !still.includes(fontVariantLabel(r)));
+    if (recovered.length === 0) return [];
+    const labels = new Set(recovered.map(fontVariantLabel));
+    for (let i = resources.missingFonts.length - 1; i >= 0; i--) if (labels.has(resources.missingFonts[i]!)) resources.missingFonts.splice(i, 1);
+    invalidateTextMeasurements();
+    const latest = this.doc;
+    const ids: Id[] = [];
+    for (const page of latest.pages) {
+      const rebuild = page.elements
+        .filter((e): e is TextElement => e.type === 'text' && labels.has(fontVariantLabel({ family: e.fontFamily, weight: e.fontWeight, style: e.fontStyle })))
+        .map((e) => e.id);
+      if (rebuild.length === 0) continue;
+      ids.push(...rebuild);
+      this.pages.get(page.id)?.scene.update(latest, { rebuildText: rebuild, resources });
+    }
+    this.syncModeVisibility();
+    this.contentLayer.batchDraw();
+    this.refitAfterEdit(ids);
+    this.renderChrome();
+    this.emitView();
+    this.emitStatus();
+    if (resources.missingFonts.length === 0) this.stopFontWatch();
+    return [...labels];
+  }
+
+  private watchMissingFonts(): void {
+    if (this.fontRetry || this.destroyed || this.resources.missingFonts.length === 0) return;
+    const fonts = typeof document !== 'undefined' ? (document as Document & { fonts?: FontFaceSet }).fonts : undefined;
+    const retry = () => void this.retryMissingFonts();
+    fonts?.addEventListener?.('loadingdone', retry);
+    const timer = setInterval(retry, FONT_RETRY_MS);
+    (timer as unknown as { unref?: () => void }).unref?.();
+    this.fontRetry = {
+      busy: false,
+      dispose: () => {
+        fonts?.removeEventListener?.('loadingdone', retry);
+        clearInterval(timer);
+      },
+    };
+  }
+
+  private stopFontWatch(): void {
+    this.fontRetry?.dispose();
+    this.fontRetry = null;
   }
 
   /**
@@ -557,6 +712,7 @@ export class WorkspaceController {
     if (this.followTimer) clearTimeout(this.followTimer);
     if (this.hoverFrame && typeof cancelAnimationFrame !== 'undefined') cancelAnimationFrame(this.hoverFrame);
     for (const d of this.disposers.splice(0)) d();
+    this.stopFontWatch();
     this.destroyCrop(false);
     for (const entry of this.pages.values()) this.destroyEntry(entry);
     this.pages.clear();
@@ -573,7 +729,10 @@ export class WorkspaceController {
     if (state.lastChange && state.lastChange !== prev.lastChange) this.handleChange(state.lastChange, state.document);
     if (state.zoom !== this.view.zoom || (state.zoomMode === 'fit' && prev.zoomMode !== 'fit')) this.handleZoom(state);
     if (state.cropModeId !== prev.cropModeId) this.handleCropMode(state.cropModeId, prev.cropModeId);
-    if (state.textEditingId !== prev.textEditingId) this.syncModeVisibility();
+    if (state.textEditingId !== prev.textEditingId) {
+      if (!state.textEditingId) this.pendingCaret = null;
+      this.syncModeVisibility();
+    }
     if (state.activePageId !== prev.activePageId) this.handleActivePage(state.activePageId);
     if (
       state.lastChange !== prev.lastChange ||
@@ -612,6 +771,7 @@ export class WorkspaceController {
     this.pages.clear();
     this.built = false;
     this.doc = doc;
+    this.stopFontWatch();
     this.resources = createEmptyResources();
     this.relayout();
     this.drawBackdropsOnly(doc);
@@ -721,7 +881,14 @@ export class WorkspaceController {
         this.pages.delete(pageId);
       }
     }
+    const prevDoc = this.doc;
     this.doc = doc;
+    if (change.source === 'commit') {
+      // Text boxes follow their text (schema D-9): any edit of a layout field (panel, brand
+      // font, bold toggle, paste, …) refits the height, merged into the same undo step.
+      const refit = textLayoutChanges(prevDoc, doc, change);
+      if (refit.length > 0) queueMicrotask(() => this.refitAfterEdit(refit));
+    }
     const touchedPages = new Set(change.pages);
     if (change.ids.length > 0) {
       const ids = new Set(change.ids);
@@ -777,13 +944,17 @@ export class WorkspaceController {
         if (gen !== this.generation || this.destroyed) return;
         const latest = this.doc;
         const wanted = new Set(textIds);
+        const refit: Id[] = [];
         for (const pageId of pageIds) {
           const entry = this.pages.get(pageId);
           const page = latest.pages.find((p) => p.id === pageId);
           if (!entry || !page) continue;
           const rebuild = page.elements.filter((e) => e.type === 'text' && wanted.has(e.id)).map((e) => e.id);
           entry.scene.update(latest, { rebuildText: rebuild, resources: this.resources });
+          refit.push(...rebuild);
         }
+        // Metrics may differ from the fallback measured before the face arrived.
+        if (refit.length > 0) this.refitAfterEdit(refit);
         this.syncModeVisibility();
         this.contentLayer.batchDraw();
         this.renderChrome();
@@ -1000,6 +1171,7 @@ export class WorkspaceController {
   }
 
   private emitStatus(): void {
+    if (this.built && this.resources.missingFonts.length > 0) this.watchMissingFonts();
     this.onStatus?.(this.getStatus());
   }
 
@@ -1220,6 +1392,12 @@ export class WorkspaceController {
       a.setActivePage(hit.pageId);
       return false;
     }
+    if (hit.kind === 'element' && !e.shiftKey && this.startsMarquee(hit.id)) {
+      // A locked element (typically a full-page background) never blocks rubber-band selection.
+      this.gesture = { kind: 'marquee', pointerId, start: p, pageId: hit.pageId, additive: false, moved: false, ids: [], lockedHit: hit.id };
+      if (s.hoveredId) a.setHovered(null);
+      return true;
+    }
     if (hit.kind === 'element') {
       const wasSelected = s.selectedIds.includes(hit.id);
       if (e.shiftKey) a.select([hit.id], { mode: 'toggle' });
@@ -1231,6 +1409,21 @@ export class WorkspaceController {
     }
     this.gesture = { kind: 'marquee', pointerId, start: p, pageId: hit.pageId, additive: !!e.shiftKey, moved: false, ids: [] };
     return true;
+  }
+
+  /**
+   * A press on a locked element starts a marquee instead of an inert press, unless it is
+   * part of a selection that has something draggable.
+   */
+  private startsMarquee(id: Id): boolean {
+    const el = this.lookup(id)?.element;
+    if (!el?.locked) return false;
+    const s = this.store.getState();
+    if (!s.selectedIds.includes(id)) return true;
+    return !s.selectedIds.some((sid) => {
+      const other = this.lookup(sid)?.element;
+      return !!other && !other.locked && !other.hidden;
+    });
   }
 
   pointerMove(e: PointerInput): void {
@@ -1284,7 +1477,9 @@ export class WorkspaceController {
         break;
       case 'marquee':
         this.marquee.visible(false);
-        if (!g.moved) {
+        if (!g.moved && g.lockedHit) {
+          a.select([g.lockedHit]);
+        } else if (!g.moved) {
           if (g.pageId && g.pageId !== s.activePageId) a.setActivePage(g.pageId);
           else if (!g.additive) a.selectNone();
         } else if (g.ids.length > 0) {
@@ -1305,6 +1500,7 @@ export class WorkspaceController {
     const g = this.gesture;
     this.gesture = null;
     if (g?.kind === 'drag') {
+      this.dropTarget.visible(false);
       const entry = this.pages.get(g.pageId);
       entry?.scene.update(this.doc, { dirty: g.ids });
       this.drawGuides(null, []);
@@ -1325,8 +1521,11 @@ export class WorkspaceController {
     const el = this.lookup(hit.id)?.element;
     if (!el || el.locked) return;
     const a = this.store.getState().actions;
-    if (el.type === 'text') a.startTextEditing(el.id);
-    else if (el.type === 'image') a.enterCropMode(el.id);
+    if (el.type === 'text') {
+      this.pendingCaret = { id: el.id, x: e.x, y: e.y };
+      a.startTextEditing(el.id);
+      if (this.store.getState().textEditingId !== el.id) this.pendingCaret = null;
+    } else if (el.type === 'image') a.enterCropMode(el.id);
   }
 
   contextMenu(e: PointerInput & { clientX: number; clientY: number }): void {
@@ -1403,6 +1602,7 @@ export class WorkspaceController {
       others: getSnapTargets(page, ids),
       dx: 0,
       dy: 0,
+      last: g.start,
     };
     if (s.hoveredId) s.actions.setHovered(null);
   }
@@ -1425,6 +1625,10 @@ export class WorkspaceController {
     }
     g.dx = dx;
     g.dy = dy;
+    g.last = p;
+    const drop = this.dropFrameFor(g);
+    if (drop) this.dropTarget.setAttrs({ x: drop.x, y: drop.y, width: drop.width, height: drop.height, visible: true });
+    else this.dropTarget.visible(false);
     const entry = this.pages.get(g.pageId);
     for (const el of g.elements) entry?.scene.getElementNode(el.id)?.position({ x: el.x + dx, y: el.y + dy });
     this.contentLayer.batchDraw();
@@ -1432,8 +1636,26 @@ export class WorkspaceController {
     this.renderChrome();
   }
 
+  /** Page frame under the pointer when it differs from the dragged elements' page (else null). */
+  private dropFrameFor(g: Extract<Gesture, { kind: 'drag' }>): PageFrameLayout | null {
+    const frame = pageAtWorldPoint(this.layout, screenToWorld(this.view, g.last));
+    return frame && frame.pageId !== g.pageId ? frame : null;
+  }
+
   private endDrag(g: Extract<Gesture, { kind: 'drag' }>): void {
     this.drawGuides(null, []);
+    this.dropTarget.visible(false);
+    const drop = this.dropFrameFor(g);
+    const src = this.frameOf(g.pageId);
+    if (drop && src) {
+      // Dropped over another page: the elements move there, keeping their screen position.
+      const moved = this.store.getState().actions.moveElementsToPage(g.ids, drop.pageId, g.dx + src.x - drop.x, g.dy + src.y - drop.y);
+      if (moved.length > 0) {
+        this.pages.get(g.pageId)?.scene.update(this.doc, { dirty: g.ids });
+        this.syncModeVisibility();
+        return;
+      }
+    }
     // Always commits (a zero move still reports the ids as touched, which resets the nodes).
     this.store.getState().actions.moveElements(g.ids, g.dx, g.dy);
     this.pages.get(g.pageId)?.scene.update(this.doc, { dirty: g.ids });

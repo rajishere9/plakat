@@ -41,7 +41,7 @@ async function prepare(ctx: AppContext, raw: unknown, id?: string): Promise<Plak
   if (id) doc = { ...doc, id };
   if (doc.meta.createdAt === EPOCH) doc = { ...doc, meta: { ...doc.meta, createdAt: now.toISOString() } };
   doc = withUpdatedAt(doc, now);
-  return internalizeDocumentAssets(doc, ctx.uploads);
+  return internalizeDocumentAssets(doc, ctx.uploads, { remote: ctx.remoteAssets });
 }
 
 export function registerProjectRoutes(app: FastifyInstance, ctx: AppContext): void {

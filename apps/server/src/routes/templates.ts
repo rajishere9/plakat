@@ -1,8 +1,9 @@
-import { createId, parseDocument, type PageSize, type PlakatDocument } from '@plakat/schema';
+import { createId, type PageSize, type PlakatDocument } from '@plakat/schema';
 import type { FastifyInstance } from 'fastify';
 import { bodyField, idParam, toIso, type AppContext } from '../context.ts';
 import {
   bundleDocumentForExport,
+  cleanQueryString,
   documentSummary,
   escapeLike,
   internalizeDocumentAssets,
@@ -10,7 +11,7 @@ import {
   parseIncomingDocument,
   withUpdatedAt,
 } from '../documents.ts';
-import { HttpError, notFound, schemaErrorToHttp } from '../errors.ts';
+import { HttpError, notFound } from '../errors.ts';
 import { sendPortableFile } from './projects.ts';
 import { sendThumbnail, storeThumbnail, thumbnailUrl } from './thumbnails.ts';
 
@@ -53,7 +54,16 @@ async function prepare(ctx: AppContext, doc: PlakatDocument, id?: string): Promi
   const now = ctx.now();
   if (id) doc = { ...doc, id };
   if (doc.meta.createdAt === EPOCH) doc = { ...doc, meta: { ...doc.meta, createdAt: now.toISOString() } };
-  return internalizeDocumentAssets(withUpdatedAt(doc, now), ctx.uploads);
+  return internalizeDocumentAssets(withUpdatedAt(doc, now), ctx.uploads, { remote: ctx.remoteAssets });
+}
+
+/**
+ * Built-in templates have stable `tpl_<category>_<slug>` ids. A user template keeping
+ * such an id (e.g. a file downloaded from a newer instance) would squat the id of a
+ * built-in shipped later, so user templates never keep a `tpl_` id.
+ */
+export function freshIdForBuiltInScheme(doc: PlakatDocument): PlakatDocument {
+  return doc.id.startsWith('tpl_') ? { ...doc, id: createId('doc') } : doc;
 }
 
 /** Inserts a user template; a taken id is replaced by a fresh one. */
@@ -86,8 +96,8 @@ export function registerTemplateRoutes(app: FastifyInstance, ctx: AppContext): v
 
   app.get('/api/templates', async (req) => {
     const query = (req.query ?? {}) as Record<string, unknown>;
-    const category = typeof query['category'] === 'string' ? query['category'].trim().slice(0, 200) : '';
-    const q = typeof query['q'] === 'string' ? query['q'].trim().toLowerCase().slice(0, 200) : '';
+    const category = typeof query['category'] === 'string' ? cleanQueryString(query['category'].trim().slice(0, 200)) : '';
+    const q = typeof query['q'] === 'string' ? cleanQueryString(query['q'].trim().toLowerCase().slice(0, 200)) : '';
     const where: string[] = [];
     const params: unknown[] = [];
     if (category) {
@@ -121,21 +131,14 @@ export function registerTemplateRoutes(app: FastifyInstance, ctx: AppContext): v
   });
 
   app.post('/api/templates/import', async (req, reply) => {
-    let doc: PlakatDocument;
-    if (typeof req.body === 'string' || Buffer.isBuffer(req.body)) {
-      try {
-        doc = parseDocument(req.body.toString());
-      } catch (error) {
-        throw schemaErrorToHttp(error) ?? error;
-      }
-    } else {
-      doc = parseIncomingDocument(req.body);
-    }
+    // Only application/json and application/vnd.plakat+json reach here as objects; the
+    // text/plain parser is removed app-wide (a CORS "simple" content type, see security.ts).
+    const doc = freshIdForBuiltInScheme(parseIncomingDocument(req.body));
     return reply.code(201).send(await insertTemplate(ctx, await prepare(ctx, doc)));
   });
 
   app.post('/api/templates', async (req, reply) => {
-    const doc = await prepare(ctx, parseIncomingDocument(bodyField(req.body, 'document')));
+    const doc = await prepare(ctx, freshIdForBuiltInScheme(parseIncomingDocument(bodyField(req.body, 'document'))));
     return reply.code(201).send(await insertTemplate(ctx, doc));
   });
 

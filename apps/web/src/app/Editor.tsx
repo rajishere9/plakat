@@ -29,7 +29,8 @@ import { navigate } from './router.ts';
 import { SaveAsTemplateDialog } from './SaveAsTemplateDialog.tsx';
 import { useEd, useServices, type AppServices } from './services.tsx';
 import { ShortcutsDialog } from './ShortcutsDialog.tsx';
-import { errorMessage, toast } from './toasts.tsx';
+import { useUseTemplate } from './UseTemplateDialog.tsx';
+import { dismissToast, errorMessage, toast } from './toasts.tsx';
 import { TopBar } from './TopBar.tsx';
 
 export interface EditorProps {
@@ -42,23 +43,27 @@ export async function uploadAndInsert(files: File[], services: Pick<AppServices,
   files = imageFilesOf(files);
   if (!files.length) return;
   toast.info(files.length === 1 ? `Uploading ${files[0]!.name}…` : `Uploading ${files.length} images…`, { duration: 0, key: 'paste-upload' });
+  let added = 0;
   await Promise.all(
     files.map(async (f) => {
       try {
         const asset = await uploadImageFile(f, services.api);
         const actions = services.store.getState().actions;
         const id = actions.addImage(asset, {}, target ? { pageId: target.pageId } : {});
+        if (!id) throw new Error('The image could not be added to the page.');
+        added++;
         if (target && files.length === 1) {
           // Center the new image on the drop point (merged into the "Add image" undo step).
           const el = services.store.getState().document.pages.find((p) => p.id === target.pageId)?.elements.find((e) => e.id === id);
           if (el) actions.updateElement(id, { x: target.x - el.width / 2, y: target.y - el.height / 2 }, { merge: true });
         }
       } catch (e) {
-        toast.error('Upload failed', { detail: errorMessage(e) });
+        toast.error(files.length === 1 ? 'Upload failed' : `Upload of ${f.name} failed`, { detail: errorMessage(e) });
       }
     }),
   );
-  toast.success(files.length === 1 ? 'Image added' : `${files.length} images added`, { key: 'paste-upload' });
+  if (added > 0) toast.success(added === 1 ? 'Image added' : `${added} images added`, { key: 'paste-upload' });
+  else dismissToast('paste-upload');
 }
 
 function FlyoutPanel({ panel, onClose }: { panel: string; onClose: () => void }): JSX.Element | null {
@@ -171,19 +176,16 @@ export function Editor({ kind, id }: EditorProps): JSX.Element {
     }
   };
 
-  const useTemplate = async () => {
-    try {
-      const newId = await persistence.createProject({ template: store.getState().document });
-      navigate({ name: 'design', id: newId });
-    } catch (e) {
-      toast.error('Could not create a design from this template', { detail: errorMessage(e) });
-    }
-  };
+  const useTpl = useUseTemplate();
+  const useTemplate = () => useTpl.start({ template: store.getState().document });
 
   const onWorkspaceStatus = useCallback((st: WorkspaceStatus) => {
     if (st.loading) return;
     if (st.missingFonts.length) {
       toast.warning('Some fonts could not be loaded', { key: 'missing-fonts', detail: `${st.missingFonts.join(', ')} — shown with a fallback font. Exports will ask before using fallbacks.` });
+    } else {
+      // A late font arrived (the canvas was rebuilt with it): the warning no longer applies.
+      dismissToast('missing-fonts');
     }
     if (st.missingAssets.length) {
       toast.warning(`${st.missingAssets.length === 1 ? 'An image' : `${st.missingAssets.length} images`} could not be loaded`, { key: 'missing-assets', detail: 'Missing images are shown as a checkerboard. Replace them before exporting.' });
@@ -261,6 +263,7 @@ export function Editor({ kind, id }: EditorProps): JSX.Element {
       </div>
       <ExportDialog open={exportOpen} onClose={() => setExportOpen(false)} />
       <SaveAsTemplateDialog open={tplOpen} onClose={() => setTplOpen(false)} document={doc} categories={templateCategories(templates.data ?? [])} />
+      {useTpl.element}
       <ShortcutsDialog open={shortcutsOpen} onClose={() => store.getState().actions.setShortcutsHelpOpen(false)} />
     </div>
   );

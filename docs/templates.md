@@ -92,12 +92,21 @@ The preview renders every page to `<tmp>/plakat-template-previews/<category>__<s
 
 ## Slot guidelines
 
-Slots are the "Use template" fill form (schema §10). Each slot targets one or more elements.
+Slots drive the "Use template" fill form (schema §10). Each slot targets one or more elements.
+
+When someone clicks **Use template** (Home, the Templates panel's "Use in a new design", or the read-only template editor), the web app shows a form built from `template.slots`, in slot order, next to a live preview of the filled template:
+
+- text slots are a one-line input (`multiline: false`, line breaks are stripped) or a textarea, with the template text as placeholder, a `n / maxLength` counter, and an error while the text is too long;
+- image slots get an image picker (the file is uploaded and passed as an `ImageFill` with its asset record), with the template image shown until one is chosen;
+- color slots show the `palette` swatches plus a custom color input;
+- `label` is the field label, `description` the hint below it, and `required` slots (marked `*`) must be filled before **Create design** is enabled.
+
+An empty field keeps the template's own content (no fill), and **Use as is** skips the form entirely (required fields included). The fills go to `instantiateTemplate()`, which validates them again. Templates without slots skip the form. After the design is created everything is freely editable; slots no longer constrain it (designs have `template: null`).
 
 - **What becomes a slot:** every piece of text a user would always change (headline, name, date, contact lines), every photo and logo, and the 1–2 colors that define the look (the accent; sometimes a background, implemented as a full-size locked `rect` because page backgrounds cannot be slots, D-15). Fixed labels ("DATE", "Menu") and decoration stay unslotted. Users can still edit them after instantiation.
 - **Labels:** short, in sentence case, describing the content ("Event name", "Accent color"), never the element ("Text 3"). Use `description` for guidance such as "One dish per line" or "Portrait photos work best".
 - **Order:** most important first (headline/name, main photo, …), colors last.
-- **`required`:** set it only for the fields that make the template meaningful (headline, main photo). Enforcement is opt-in (`enforceRequired`).
+- **`required`:** set it only for the fields that make the template meaningful (headline, main photo). The fill form enforces it; in the API (`instantiateTemplate`) enforcement is opt-in (`enforceRequired`).
 - **Text `maxLength`:** always set it, and choose it with `--stress` so that the longest allowed input still fits the layout. The placeholder must itself respect `maxLength`. **`multiline: false`** for one-line fields (names, prices, labels), **`true`** when line breaks are part of the design ("Summer\nSounds").
 - **Multi-target slots** are encouraged when one value appears twice: the café name on the cover and on the menu page, the company on both card sides, one accent color across many shapes.
 - **Image slots:** `fit: "cover"` for photos, `"contain"` for logos. Place logos on a transparent background.

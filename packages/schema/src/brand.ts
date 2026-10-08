@@ -1,6 +1,6 @@
 import { syncFonts } from './fonts.ts';
 import { createId, deepCopy } from './ids.ts';
-import { DocumentValidationError } from './load.ts';
+import { checkJsonNesting, DocumentValidationError } from './load.ts';
 import {
   BRAND_KIT_FORMAT,
   type Asset,
@@ -62,6 +62,8 @@ export function loadBrandKit(input: unknown): BrandKit {
   if (typeof v === 'number' && v > CURRENT_BRAND_KIT_SCHEMA_VERSION) {
     throw new UnsupportedSchemaVersionError(v, CURRENT_BRAND_KIT_SCHEMA_VERSION);
   }
+  const tooDeep = checkJsonNesting(input);
+  if (tooDeep) throw tooDeep;
   const reserved = findReservedKey(input);
   if (reserved) throw new DocumentValidationError([{ path: reserved, message: 'Reserved key (__proto__, constructor and prototype are not allowed)' }]);
   const parsed = BrandKitSchema.safeParse(input);

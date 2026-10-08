@@ -1,10 +1,9 @@
 import type { FastifyInstance } from 'fastify';
 import { bodyField, type AppContext } from '../context.ts';
 import { HttpError, notFound } from '../errors.ts';
-import { fetchPublic, readBodyCapped } from '../net/safeFetch.ts';
+import { downloadPublicImage } from '../assets/remote.ts';
 import type { AssetProvider } from '../assets/provider.ts';
 
-const ALLOWED_CONTENT_TYPES = new Set(['image/png', 'image/jpeg', 'image/jpg', 'image/pjpeg', 'image/webp', 'image/gif', 'image/svg+xml']);
 const DOWNLOAD_TIMEOUT_MS = 30_000;
 
 function getProvider(ctx: AppContext, params: unknown): AssetProvider {
@@ -44,22 +43,12 @@ export function registerAssetRoutes(app: FastifyInstance, ctx: AppContext): void
     }
     // The provider resolves the URL; clients never supply one (SSRF safety).
     const download = await provider.getDownload(itemId);
-    const { response } = await fetchPublic(download.url, {
+    const bytes = await downloadPublicImage(download.url, {
       fetch: ctx.fetch,
       resolveHost: ctx.resolveHost,
       timeoutMs: DOWNLOAD_TIMEOUT_MS,
-      headers: { Accept: 'image/*', 'User-Agent': 'Plakat/0.1 (self-hosted design editor)' },
+      maxBytes: ctx.config.maxUploadBytes,
     });
-    if (!response.ok) {
-      await response.body?.cancel().catch(() => {});
-      throw new HttpError(502, 'upstream_error', `Image download failed with HTTP ${response.status}`);
-    }
-    const contentType = (response.headers.get('content-type') ?? '').split(';')[0]!.trim().toLowerCase();
-    if (!ALLOWED_CONTENT_TYPES.has(contentType)) {
-      await response.body?.cancel().catch(() => {});
-      throw new HttpError(502, 'bad_upstream_content', `Provider returned unsupported content type "${contentType || 'none'}"`);
-    }
-    const bytes = await readBodyCapped(response, ctx.config.maxUploadBytes);
     let stored;
     try {
       stored = await ctx.uploads.store(bytes, { filename: `${provider.id}-${itemId}`, attribution: download.attribution });

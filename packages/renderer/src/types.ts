@@ -22,10 +22,11 @@ export interface RenderEnv {
   readonly kind: 'browser' | 'node' | (string & {});
   /**
    * Decode `src` (already validated by the schema) into a drawable image. SVGs must be
-   * rasterized to a canvas at the asset's declared size times `svgRasterScale(asset)`.
-   * Rejects with AssetLoadError. Implementations cache by src.
+   * rasterized to a canvas of exactly `svgRasterSize(asset, opts.svgRasterScale)` px
+   * (prepareResources passes the scale the document needs; default svgRasterScale(asset)).
+   * Rejects with AssetLoadError. Implementations cache by src (SVGs by src + raster size).
    */
-  loadImage(src: string, asset: Asset, assetId: Id): Promise<DecodedImage>;
+  loadImage(src: string, asset: Asset, assetId: Id, opts?: LoadImageOptions): Promise<DecodedImage>;
   /**
    * The font readiness barrier (§3.1). Resolves only when every request is drawable
    * with the real font; otherwise rejects with FontLoadError listing missing variants.
@@ -40,6 +41,11 @@ export interface RenderEnv {
   canvasLimits?(): CanvasLimits;
   /** A detached container element for offscreen Konva stages (browser only). */
   createStageContainer?(): HTMLDivElement | undefined;
+}
+
+export interface LoadImageOptions {
+  /** SVG only: rasterize at the declared size times this factor (svgRasterScale). */
+  svgRasterScale?: number;
 }
 
 /** Output of the readiness barrier: everything a PageScene needs to draw synchronously. */

@@ -153,19 +153,49 @@ export function detectPlatform(): Platform {
   return /mac|iphone|ipad|ipod/i.test(p) ? 'mac' : 'other';
 }
 
-/** True for inputs, textareas, selects and contenteditable elements (and their descendants). */
+/**
+ * <input> types that do NOT take typed text: sliders, switches, buttons, pickers. Focus
+ * often stays on them after a drag/click (Opacity slider, Lock switch), and the editor
+ * shortcuts (Mod+Z, Delete, Mod+D, …) must keep working there.
+ */
+const NON_TEXT_INPUT_TYPES = new Set(['range', 'checkbox', 'radio', 'color', 'button', 'submit', 'reset', 'image', 'file']);
+
+function inputType(el: { type?: unknown; getAttribute?: (n: string) => unknown }): string {
+  const t = typeof el.type === 'string' ? el.type : typeof el.getAttribute === 'function' ? el.getAttribute('type') : null;
+  return typeof t === 'string' ? t.toLowerCase() : 'text';
+}
+
+/**
+ * True for text-entry controls: text-like inputs, textareas, selects and contenteditable
+ * elements (and their descendants). Sliders, checkboxes, radios, color and button inputs
+ * are not editable targets.
+ */
 export function isEditableTarget(target: unknown): boolean {
   if (!target || typeof target !== 'object') return false;
-  const el = target as { tagName?: unknown; isContentEditable?: unknown; closest?: (sel: string) => unknown };
+  const el = target as { tagName?: unknown; type?: unknown; isContentEditable?: unknown; closest?: (sel: string) => unknown };
   if (typeof el.tagName !== 'string') return false;
   const tag = el.tagName.toUpperCase();
-  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
+  if (tag === 'INPUT') return !NON_TEXT_INPUT_TYPES.has(inputType(el));
+  if (tag === 'TEXTAREA' || tag === 'SELECT') return true;
   if (el.isContentEditable === true) return true;
   if (typeof el.closest === 'function') {
     const hit = el.closest('[contenteditable]:not([contenteditable="false"])');
     if (hit) return true;
   }
   return false;
+}
+
+/** Controls whose native arrow-key behavior wins over nudging (focused slider / radio group). */
+function consumesArrowKeys(target: unknown): boolean {
+  if (!target || typeof target !== 'object') return false;
+  const el = target as { tagName?: unknown; type?: unknown; getAttribute?: (n: string) => unknown };
+  if (typeof el.tagName !== 'string') return false;
+  if (el.tagName.toUpperCase() === 'INPUT') {
+    const t = inputType(el);
+    return t === 'range' || t === 'radio';
+  }
+  const role = typeof el.getAttribute === 'function' ? el.getAttribute('role') : null;
+  return role === 'slider' || role === 'radio' || role === 'tab' || role === 'menuitem' || role === 'option';
 }
 
 function normalizeKey(key: string): string {
@@ -203,6 +233,7 @@ export function matchShortcut(e: KeyEventLike, options: MatchOptions = {}): Shor
     if (e.repeat && def.repeat === false) continue;
     if (!def.combos.some((c) => comboMatches(c, e, platform))) continue;
     if (def.id === 'nudge') {
+      if (consumesArrowKeys(e.target)) continue;
       const step = e.shiftKey ? NUDGE_STEP_LARGE : NUDGE_STEP;
       const dx = e.key === 'ArrowLeft' ? -step : e.key === 'ArrowRight' ? step : 0;
       const dy = e.key === 'ArrowUp' ? -step : e.key === 'ArrowDown' ? step : 0;

@@ -1,5 +1,5 @@
 import type { PlakatDocument } from './types.ts';
-import { DocumentSchema, findReservedKey, toValidationIssues, type ValidationIssue } from './validation.ts';
+import { DocumentSchema, findExcessiveNesting, findReservedKey, MAX_JSON_DEPTH, toValidationIssues, type ValidationIssue } from './validation.ts';
 import { migrateDocument, MigrationError, UnsupportedSchemaVersionError, type MigrateOptions } from './version.ts';
 
 export class DocumentValidationError extends Error {
@@ -31,7 +31,18 @@ export function loadDocument(input: unknown, options?: MigrateOptions): PlakatDo
   return result.document;
 }
 
+/**
+ * DocumentValidationError when untrusted JSON nests deeper than MAX_JSON_DEPTH (checked
+ * iteratively before anything recursive, such as structuredClone or zod, touches it).
+ */
+export function checkJsonNesting(input: unknown): DocumentValidationError | null {
+  const deep = findExcessiveNesting(input, MAX_JSON_DEPTH);
+  return deep ? new DocumentValidationError([{ path: deep, message: `Nested too deeply (more than ${MAX_JSON_DEPTH} levels)` }]) : null;
+}
+
 export function safeLoadDocument(input: unknown, options?: MigrateOptions): LoadResult {
+  const tooDeep = checkJsonNesting(input);
+  if (tooDeep) return { ok: false, error: tooDeep };
   let migrated;
   try {
     migrated = migrateDocument(input, options);
@@ -56,6 +67,8 @@ export function assertValidDocument(doc: unknown): asserts doc is PlakatDocument
 }
 
 function parseStrict(input: unknown): { ok: true; data: PlakatDocument } | { ok: false; error: DocumentValidationError } {
+  const tooDeep = checkJsonNesting(input);
+  if (tooDeep) return { ok: false, error: tooDeep };
   const reserved = findReservedKey(input);
   if (reserved) {
     return { ok: false, error: new DocumentValidationError([{ path: reserved, message: 'Reserved key (__proto__, constructor and prototype are not allowed)' }]) };

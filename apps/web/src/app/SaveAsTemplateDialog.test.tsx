@@ -83,6 +83,18 @@ describe('SaveAsTemplateDialog', () => {
     });
   });
 
+  it('refuses a max length shorter than the placeholder text', async () => {
+    const onSave = vi.fn<(i: SaveAsTemplateInput) => Promise<void>>(() => Promise.resolve());
+    const doc = designDoc();
+    renderWithServices(<SaveAsTemplateDialog open onClose={() => {}} document={doc} onSave={onSave} />, createTestServices({ document: doc }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Maximum characters for Big title' }), { target: { value: '2' } });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Save to templates' }));
+    });
+    expect(onSave).not.toHaveBeenCalled();
+    expect(screen.getByText(/allows at most 2\. Shorten the text or raise the limit\./)).toBeTruthy();
+  });
+
   it('defaults to persistence.saveAsTemplate and shows errors inline', async () => {
     const doc = designDoc();
     const persistence = createPersistenceStub({ saveAsTemplate: vi.fn(() => Promise.reject(new Error('Server says no'))) });

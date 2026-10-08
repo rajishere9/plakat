@@ -9,6 +9,7 @@ import {
   createFetchAssetFetcher,
   PORTABLE_FILE_EXTENSION,
   PORTABLE_MIME_TYPE,
+  pruneUnusedAssets,
   saveAsTemplate,
   serializeDocument,
   type AssetFetcher,
@@ -22,9 +23,13 @@ export function portableFileName(doc: Pick<PlakatDocument, 'meta'>): string {
   return `${exportBaseName(doc.meta.title)}${PORTABLE_FILE_EXTENSION}`;
 }
 
-/** Bundles + serializes a document; returns the file text and its name. */
+/**
+ * Bundles + serializes a document; returns the file text and its name. Registry entries no
+ * page uses (left behind by Replace image / delete) are dropped first: they would bloat the
+ * file and could make bundling fail although nothing renders them.
+ */
 export async function buildPortableFile(doc: PlakatDocument, fetchAsset: AssetFetcher = createFetchAssetFetcher()): Promise<{ text: string; filename: string }> {
-  const bundled = await bundleAssets(doc, fetchAsset);
+  const bundled = await bundleAssets(pruneUnusedAssets(doc), fetchAsset);
   return { text: serializeDocument(bundled), filename: portableFileName(doc) };
 }
 

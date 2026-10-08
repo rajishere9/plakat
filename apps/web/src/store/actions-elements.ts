@@ -1,5 +1,6 @@
 /** Element actions: add, update, transform, delete, duplicate, fonts, images, clipboard. */
 import {
+  assertValidDocument,
   bakeTransform,
   centerOnPage,
   cloneElementsWithNewIds,
@@ -15,17 +16,19 @@ import {
   normalizeRotation,
   removeElements,
   rotateAroundCenter,
+  type PlakatDocument,
   type Id,
   type PlakatElement,
   type TextElement,
 } from '@plakat/schema';
-import { buildClipboardData, type ClipboardData } from '../lib/clipboard.ts';
+import { buildClipboardData, clipboardKey, type ClipboardData } from '../lib/clipboard.ts';
 import { remapCrop } from '../lib/crop.ts';
 import { sanitizeElementPatch, sanitizeFilters, type ElementPatch } from '../lib/element-patch.ts';
 import { adaptVariantToFamily, availableWeights, hasItalic, isBold, toggledBoldWeight } from '../lib/fonts.ts';
 import {
   elementIndex,
   ensureDraftAsset,
+  errorMessage,
   expandGroups,
   findDraftElement,
   findDraftPage,
@@ -52,6 +55,7 @@ type ElementActionKeys =
   | 'updateElements'
   | 'commitTransforms'
   | 'moveElements'
+  | 'moveElementsToPage'
   | 'setRotation'
   | 'deleteElements'
   | 'duplicateElements'
@@ -73,8 +77,23 @@ type ElementActionKeys =
   | 'cut'
   | 'paste';
 
+/** True when `doc` passes strict validation. */
+function isValidDocument(doc: PlakatDocument): boolean {
+  try {
+    assertValidDocument(doc);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function createElementActions(ctx: ActionContext): Pick<EditorActions, ElementActionKeys> {
   const { get, set, commit } = ctx;
+  /**
+   * Repeated pastes of the same payload (internal OR system clipboard) cascade by
+   * DUPLICATE_OFFSET each time instead of stacking. Keyed by clipboardKey() + target page; copy() restarts it.
+   */
+  let pasteSeries: { key: string; pageId: Id | null; count: number } | null = null;
 
   const pageIdFor = (pageId?: Id) => {
     const s = get();
@@ -167,18 +186,21 @@ export function createElementActions(ctx: ActionContext): Pick<EditorActions, El
       const pageId = pageIdFor(options.pageId);
       const off = options.offset ?? { x: 0, y: 0 };
       const shifted = elements.map((e) => ({ ...e, x: e.x + off.x, y: e.y + off.y }));
-      let ids: Id[] = [];
+      const base = get().document;
+      let r: { document: PlakatDocument; elementIds: Id[] };
+      try {
+        r = importElements(base, pageId, { elements: shifted, assets });
+        // Foreign content (system clipboard, other documents) must leave the document valid
+        // (crop inside the asset, …); otherwise autosave would be stuck in "error".
+        if (!isValidDocument(r.document) && isValidDocument(base)) assertValidDocument(r.document);
+      } catch (e) {
+        set({ lastError: `Could not insert: ${errorMessage(e)}` });
+        return [];
+      }
+      const ids = r.elementIds;
       const opts: CommitOptions = { activePageId: pageId };
-      commit(
-        'Insert',
-        (_d, base) => {
-          const r = importElements(base, pageId, { elements: shifted, assets });
-          ids = r.elementIds;
-          if (options.select !== false) opts.select = ids;
-          return r.document;
-        },
-        opts,
-      );
+      if (options.select !== false) opts.select = ids;
+      commit(options.label ?? 'Insert', () => r.document, opts);
       return ids;
     },
 
@@ -252,6 +274,36 @@ export function createElementActions(ctx: ActionContext): Pick<EditorActions, El
         },
         { touched: [...ids], ...rest },
       );
+    },
+
+    moveElementsToPage(ids, pageId, dx, dy) {
+      const s = get();
+      if (!Number.isFinite(dx) || !Number.isFinite(dy) || !s.document.pages.some((p) => p.id === pageId)) return [];
+      const want = new Set(ids);
+      const moving = s.document.pages.flatMap((p) => (p.id === pageId ? [] : p.elements.filter((e) => want.has(e.id) && !e.locked)));
+      if (moving.length === 0) return [];
+      const movingIds = new Set(moving.map((e) => e.id));
+      // Groups must not span pages: a partly moved group leaves its moved members ungrouped.
+      const splitGroups = new Set(
+        s.document.pages.flatMap((p) => p.elements.filter((e) => e.groupId && !movingIds.has(e.id)).map((e) => e.groupId!)),
+      );
+      const moved = moving.map((e) => ({ ...e, x: e.x + dx, y: e.y + dy, groupId: e.groupId && splitGroups.has(e.groupId) ? null : e.groupId }));
+      const movedIds = moved.map((e) => e.id);
+      commit(
+        'Move to page',
+        (_d, base) => ({
+          ...base,
+          pages: base.pages.map((p) =>
+            p.id === pageId
+              ? { ...p, elements: [...p.elements, ...moved] }
+              : p.elements.some((e) => movingIds.has(e.id))
+                ? { ...p, elements: p.elements.filter((e) => !movingIds.has(e.id)) }
+                : p,
+          ),
+        }),
+        { select: movedIds, activePageId: pageId, touched: movedIds },
+      );
+      return movedIds;
     },
 
     setRotation(ids, rotation, options = {}) {
@@ -410,27 +462,40 @@ export function createElementActions(ctx: ActionContext): Pick<EditorActions, El
       if (!list.length) return null;
       const page = s.document.pages.find((p) => p.elements.some((e) => e.id === list[0])) ?? s.document.pages[0]!;
       const data = buildClipboardData(s.document, page.id, list);
-      if (data) set({ clipboard: { ...data, pasteCount: 0 } });
+      if (data) {
+        set({ clipboard: { ...data, pasteCount: 0 } });
+        pasteSeries = { key: clipboardKey(data), pageId: null, count: 0 };
+      }
       return data;
     },
     cut(ids) {
       const data = actions.copy(ids);
       if (!data) return null;
-      commit('Cut', (_d, base) => removeElements(base, data.elements.map((e) => e.id)));
+      // Like Delete, cut never removes locked elements (they are still copied).
+      const drop = data.elements.filter((e) => !e.locked).map((e) => e.id);
+      if (drop.length) commit('Cut', (_d, base) => removeElements(base, drop));
       return data;
     },
     paste(data, options = {}) {
       const s = get();
-      const internal = !data;
-      const src: (ClipboardData & { pasteCount?: number }) | null = data ?? s.clipboard;
+      const src: ClipboardData | null = data ?? s.clipboard;
       if (!src || src.elements.length === 0) return [];
       const pageId = pageIdFor(options.pageId);
       const page = s.document.pages.find((p) => p.id === pageId)!;
       const originalsHere = src.sourceDocumentId === s.document.id && src.elements.some((e) => page.elements.some((pe) => pe.id === e.id));
-      const n = internal ? (s.clipboard?.pasteCount ?? 0) + 1 : 1;
-      const off = originalsHere ? DUPLICATE_OFFSET * n : 0;
-      const ids = actions.insertElements(src.elements, src.assets, { pageId, offset: { x: off, y: off } });
-      if (internal && s.clipboard && originalsHere) set({ clipboard: { ...s.clipboard, pasteCount: n } });
+      const key = clipboardKey(src);
+      const same = !!pasteSeries && pasteSeries.key === key && (pasteSeries.pageId === null || pasteSeries.pageId === pageId);
+      const n = same ? pasteSeries!.count + 1 : 1;
+      // Pasting over the originals offsets right away; elsewhere the first paste keeps the
+      // source position and later pastes of the same payload cascade from there.
+      const steps = originalsHere ? n : n - 1;
+      const off = DUPLICATE_OFFSET * steps;
+      const ids = actions.insertElements(src.elements, src.assets, { pageId, offset: { x: off, y: off }, label: 'Paste' });
+      if (ids.length) {
+        pasteSeries = { key, pageId, count: n };
+        const clip = get().clipboard;
+        if (clip && clipboardKey(clip) === key) set({ clipboard: { ...clip, pasteCount: n } });
+      }
       return ids;
     },
   };

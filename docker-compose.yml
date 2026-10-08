@@ -1,7 +1,14 @@
 # Plakat + PostgreSQL.  Usage:
-#   cp .env.example .env   # optional: set POSTGRES_PASSWORD, PUBLIC_URL, Openverse keys
+#   cp .env.example .env   # optional: set POSTGRES_PASSWORD, PUBLIC_URL, BASIC_AUTH, Openverse keys
 #   docker compose up -d --build
 #   open http://localhost:8787
+#
+# Plakat has no user accounts. The port below is published on all host interfaces;
+# set PLAKAT_BIND=127.0.0.1 to keep it local, and put an authenticating reverse proxy
+# (or BASIC_AUTH) in front before anyone else can reach it.
+#
+# .env is only used for ${...} substitution in this file: a variable reaches the app
+# container only if it is listed under app.environment.
 services:
   db:
     image: postgres:17-alpine
@@ -36,11 +43,16 @@ services:
       DATA_DIR: /data
       UPLOAD_DIR: /data/uploads
       PUBLIC_URL: ${PUBLIC_URL:-}
+      ALLOWED_HOSTS: ${ALLOWED_HOSTS:-}
+      BASIC_AUTH: ${BASIC_AUTH:-}
+      CORS_ORIGIN: ${CORS_ORIGIN:-}
+      MAX_BODY_MB: ${MAX_BODY_MB:-40}
+      OPENVERSE_API_URL: ${OPENVERSE_API_URL:-https://api.openverse.org}
       OPENVERSE_CLIENT_ID: ${OPENVERSE_CLIENT_ID:-}
       OPENVERSE_CLIENT_SECRET: ${OPENVERSE_CLIENT_SECRET:-}
       LOG_LEVEL: ${LOG_LEVEL:-info}
     ports:
-      - "${PLAKAT_PORT:-8787}:8787"
+      - "${PLAKAT_BIND:-0.0.0.0}:${PLAKAT_PORT:-8787}:8787"
     volumes:
       - plakat-data:/data
     healthcheck:

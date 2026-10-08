@@ -14,6 +14,14 @@ export interface TestApp {
   close(): Promise<void>;
 }
 
+/** Tests never touch the network: remote fetches fail unless a test injects `fetch`. */
+export const offlineFetch = (async (input: string | URL | Request) => {
+  throw new TypeError(`network disabled in tests (${String(input instanceof Request ? input.url : input)})`);
+}) as typeof fetch;
+
+/** Every non-IP host "resolves" to a public documentation-free address; `*.internal` to a private one. */
+export const fakeResolveHost = async (host: string): Promise<string[]> => (host.endsWith('.internal') ? ['10.0.0.8'] : ['93.184.216.34']);
+
 /** buildApp() on in-memory PGlite with temp upload/templates dirs. */
 export async function createTestApp(options: BuildAppOptions & { templatesDir?: string; env?: Record<string, string> } = {}): Promise<TestApp> {
   const dir = await mkdtemp(path.join(tmpdir(), 'plakat-server-test-'));
@@ -25,7 +33,7 @@ export async function createTestApp(options: BuildAppOptions & { templatesDir?: 
     ...options.env,
   });
   const { templatesDir: _t, env: _e, ...rest } = options;
-  const app = await buildApp(config, { logger: false, ...rest });
+  const app = await buildApp(config, { logger: false, fetch: offlineFetch, resolveHost: fakeResolveHost, ...rest });
   return {
     app,
     config,

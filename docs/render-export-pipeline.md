@@ -86,7 +86,7 @@ root            Group  x=0 y=0 scale=1                     ← editor puts it in
 - `contentScaleX/Y` come from `exportPixelSize(size, pixelRatio)` (§4, P-8): they map the page box exactly onto the `W × H` bitmap. They are 1 for integer pages at integer ratios.
 - The clip (D-7), the background Rect and the background-image layout are in **page px** and do not depend on the pixel ratio; only the content scale does. `setPixelRatio(r)` recomputes `exportPixelSize(size, r)`, re-applies the content scale, and re-caches filtered nodes (§3.5). *Everything ratio-dependent is a function of the current pixel ratio*, so a scene built at one ratio and rasterized at another equals a fresh build at the second.
 
-Element nodes: there is exactly **one top-level node per element**, with `id()` set to the element id and `name('element')`. Its attributes are `x`, `y`, `rotation`, `opacity` and `visible = !hidden`, with `offset = 0` and `scale = 1`. Hidden elements get `visible(false)` and are never drawn.
+Element nodes: there is exactly **one top-level node per element**, with `id()` set to the element id and `name('element')`. Its attributes are `x`, `y`, `rotation`, `opacity`, `isolated` (text with `opacity < 1` only, §3.3) and `visible = !hidden`, with `offset = 0` and `scale = 1`. Hidden elements get `visible(false)` and are never drawn.
 
 **Reconciliation** (`PageScene.update(doc)`), which is what lets the editor patch the scene instead of rebuilding it:
 
@@ -123,8 +123,9 @@ In Node tests, fonts are registered with `registerFont(file, { family, weight, s
 `loadImage` creates `new Image()`, sets `img.crossOrigin = 'anonymous'` **before** setting `src`, then sets `src` and awaits `img.decode()`. It asserts `naturalWidth > 0`.
 
 - **Declared vs decoded size** (schema D-19). Crops and layout are defined in `asset.width × asset.height`. The renderer always calls `computeImageLayout(el, asset, { width: img.width, height: img.height })`, which scales the crop to the decoded bitmap, so a different-resolution rendition samples the same region. If `compareDecodedSize(asset, decoded).aspectMismatch` (> 1 %, typically an un-baked EXIF rotation), log a warning naming the asset; the web client bakes orientation before upload (`normalizeUploadFile`: decode with `imageOrientation: 'from-image'`, re-encode), so this should never happen for uploads. Browsers apply EXIF orientation and node-canvas does not, which is one more reason to bake it.
-- **SVG** is rasterized once to an offscreen canvas of exactly `asset.width × asset.height` (or that times the largest pixel ratio in use) and that canvas is the `DecodedImage`, so decoded and declared spaces agree. Browsers invent 300 × 150 for SVGs without an intrinsic size.
-- Cache decoded images by `src`.
+- **SVG** is rasterized to an offscreen canvas of exactly `svgRasterSize(asset, k)` = `round(asset.width × k) × round(asset.height × k)` and that canvas is the `DecodedImage` (`computeImageLayout` scales crops to it, D-19). Browsers invent 300 × 150 for SVGs without an intrinsic size, hence the declared size. The factor is **`k = svgRasterScale(asset, displayScale)`**: `displayScale` is the largest number of document px one declared SVG px covers anywhere in the document (`svgDisplayScales(doc)`: every page, hidden elements and page backgrounds, crops and `objectFit` included), `k = max(1, displayScale) × SVG_RASTER_PIXEL_RATIO (4)`, rounded **up** to a half-octave step, then capped at 8192 px per side and 16 777 216 px in total. So a 24 × 24 icon drawn at 600 × 600 is rasterized at 3072 × 3072, not 96 × 96, and its edges stay crisp at print. `k` depends on the **document only**, never on the zoom or export scale, so the editor and every export of the same document draw the same bitmap (byte parity), and the caps are the same on every platform (Safari's canvas area) for the same reason. 4 covers print (3.125); above it (a 2× screen beyond 200 % zoom) on-screen SVGs are upsampled.
+  `prepareResources` passes `k` to `env.loadImage(src, asset, id, { svgRasterScale: k })` and re-decodes an SVG already in `resources` whose `k` changed (`decodedSvgScale(img)`). The editor calls **`resourcesOutdated(doc, resources, pageIds)`** after document changes (an SVG element was resized) and, when it returns true, runs `prepareResources(doc, pageIds, env, { into })` and `scene.update(doc, { resources })`, which re-applies the image nodes whose bitmap changed. Shrinking an element lowers `k` again (the export would), so the bitmaps stay identical. Node: node-canvas scales an SVG `Image` as a bitmap in `drawImage`; the Node env sets the image's `width`/`height` to the raster size first so librsvg renders the vector at that size.
+- Cache decoded images by `src` (SVGs by `src` and raster size).
 - On failure, throw `AssetLoadError(assetId)`. The editor draws a placeholder (a checkerboard rect) for missing assets. Export refuses.
 
 **P-4** All non-`data:` image sources must be same-origin or CORS-enabled. Uploads are served by the Plakat server, which is same-origin. Third-party provider images (Openverse) are never drawn from their remote URL: `POST /api/asset-providers/:id/import` downloads the full image into the server's uploads, so the editor only ever draws same-origin `/uploads/…` images. (An earlier draft planned a `GET /api/assets/proxy?url=…` route; it was not built, because a proxy that fetches client-supplied URLs is an SSRF risk and the import route covers the need. Remote thumbnails in the search panel are plain `<img>` tags and never reach a canvas.) *Rationale:* one tainted image makes `toBlob` throw a `SecurityError`, and that would surface only at export time.
@@ -137,10 +138,19 @@ The text node is a `Konva.Text` with:
 - `fontFamily`
 - `fontStyle`: `"<italic|normal> <weight>"`, for example `"italic 700"`. Konva puts this string straight into the canvas font shorthand.
 - `fontSize`, `lineHeight`, `align`, `fill`
-- `letterSpacing`: `el.letterSpacing × el.fontSize` px (the document stores em, schema D-18)
+- `letterSpacing`: `el.letterSpacing × el.fontSize` px (the document stores em, schema D-18), subject to the bidi rule below
+- `direction`: `'ltr'` or `'rtl'`, **always explicit** (never Konva's default `'inherit'`, which would take the direction of the DOM canvas in the editor but `ltr` on the detached export canvas)
 - `textDecoration`: `''` for `none`
 - `width`: `max(el.width, widestGrapheme)`, `wrap: 'word'`. `widestGrapheme` is the largest `measureSize(g).width + letterSpacingPx` over the distinct graphemes (`Intl.Segmenter`) of the transformed text, cached per (font, grapheme). *Rationale:* when not even one grapheme fits the width, Konva's `_setTextData` stops wrapping and silently drops the rest of the paragraph (D-9). A too-narrow box overflows to the side instead.
 - **no `height`**
+
+**Bidi** (`textLayoutAttrs(text, align, letterSpacingPx)`). The base direction is that of the first strong character of the transformed text (`textBaseDirection`, like HTML `dir="auto"`; the inline editor's textarea must use `dir="auto"` too). Konva draws each grapheme with its own `fillText`, advancing left to right, whenever `letterSpacing ≠ 0` or `align = 'justify'` and its direction is not `'rtl'`: that mirrors Hebrew (letters and words reversed) and leaves Arabic unshaped (isolated forms). So:
+- RTL base direction: `direction: 'rtl'`. Konva then draws one native run per line, with `letterSpacing` through `ctx.letterSpacing`. Konva cannot justify that run, so `justify` becomes `right` (the start edge of RTL text). `left`, `center` and `right` stay absolute.
+- LTR base direction with RTL characters inside (`containsRtl`), and `letterSpacing ≠ 0` or `justify`: `letterSpacing` 0 and `justify` → `left`, so the line stays one native run and the RTL words stay intact.
+- Anything else is unchanged (LTR text keeps Konva's per-grapheme path for spacing and justify).
+`widestGrapheme` uses the effective `letterSpacing`. node-canvas has no `ctx.letterSpacing`, so under Node RTL text is drawn without its spacing (measurement includes it); only tests render under Node.
+
+**Opacity.** An element group with `opacity < 1` that holds **text** is a Konva **isolated** group (`isolated: true`): its children are drawn into a device-pixel buffer and the opacity is applied once to the finished image, like CSS `opacity`. Without it Konva applies `globalAlpha` to every `fillText` (per line, or per grapheme with letter spacing) and overlapping lines or glyphs (line height below ~1, negative letter spacing) composite twice and come out darker (alpha 192 instead of 128 at opacity 0.5). Shapes need no isolation (Konva's own buffer handles fill + stroke) and images draw one primitive. The buffer is in destination device pixels, so the editor's `rasterizePage` and the export (same canvas, same geometry) stay byte-identical.
 
 **P-5** Vertical alignment is computed, not delegated. Measure `h = node.height()` with the height left unset, then offset the text within the element box: `top` uses 0, `middle` uses `(height − h)/2`, and `bottom` uses `height − h`. If `h > height`, the offset is 0 and the text overflows downward. *Rationale:* Konva drops whole lines that do not fit a fixed `height` (verified in `Text.js`). D-9 forbids losing text.
 
@@ -188,6 +198,11 @@ It sits inside the element group. For a flip, wrap it in an inner group with `sc
 
   Always pass `pixelRatio` explicitly and never rely on the `Konva.pixelRatio` default. The **`offset` padding is required**: `Node.cache` sizes its bitmap `floor(logicalWidth × r)` (`SceneCanvas`), which at a fractional ratio truncates up to one device pixel; a 100 px image at print (r = 3.125) would get 312 instead of 312.5 device px and lose half a column at its right and bottom edges, a seam that unfiltered (uncached) images do not have. With at least one logical px (and at least one device px) of transparent padding on each side, the truncation always falls on padding. After any change to a cached element, or a change of pixel ratio (`setPixelRatio`), call `clearCache()` then `cache(...)` again. In the editor, re-caching after zoom is debounced (about 150 ms), with the stale cache shown meanwhile. *Rationale:* a cache made at ratio 1 and drawn at 2× is upsampled and blurry, and blur radius in device pixels depends on the cache ratio.
 - Images without active filters are **not** cached in either path. (Caching changes how pixels are rasterized, so both paths must follow the same rule.)
+- **Cache size limits** (`planFilterCache`). A filter cache is `(w + 2·offset) × r` device px per side, plus a filter canvas and an `ImageData` of the same size. When that exceeds the browser's canvas limits or memory, Konva only logs "Unable to apply filter" and the image **disappears** (seen on screen at zoom 8 × dpr 2, and in a print export of an image much larger than the page; WebKit's 16.7 MP cap is reached far sooner). So every filter cache is planned against `limits = env.canvasLimits()` (export) or `platformCanvasLimits()` (editor), with a budget of `min(limits.maxArea, FILTER_CACHE_MAX_AREA = 8192²)`:
+  1. the whole node at ratio `r`, exactly the P-7 call above (the normal case);
+  2. else only the part the page clip can show: the page box mapped into node-local coordinates (`group × flip × node` transform, inverted; bounding box), padded by the blur radius + 2 px, with its origin on a multiple of the smallest `n` for which `n × r` is an integer (print: 8) so the crop does not resample the visible pixels (integer ratios: byte-identical; fractional ratios: within 1 level), cached with `cache({ x, y, width, height, pixelRatio: r, offset })`;
+  3. else, **editor** (`filterCacheOverflow: 'clamp'`, the PageScene default): the largest ratio below `r` that fits the budget (the image stays visible, a little soft at extreme zoom); **export** (`renderPageWithResources` creates its scene with `canvasLimits` and `filterCacheOverflow: 'error'`): the cropped cache if it fits the hard limits, otherwise **`CanvasLimitError`**, never a file with the image missing.
+  The plan is a function of node geometry, page size, ratio and limits, so the editor's `rasterizePage` and the export choose the same cache. A cropped cache in the editor is computed for the element's position at apply time; it is refreshed by the `update(doc, { dirty })` after a drag or transform (and on `setPixelRatio` / page-size changes). Only caches over the budget are ever cropped.
 
 ## 4. Export dimensions: the rounding rule
 
@@ -273,7 +288,7 @@ Additional fixtures: a **narrow text box** (width 0 and narrower than one glyph)
 
 Tests:
 
-1. **Dimensions.** For every preset × {1x, 2x, print}, `exportPage` decodes to exactly the table in §4.1. (Run at least 1x and 2x for all presets, plus print for A4 and the business cards, to keep CI fast.)
+1. **Dimensions.** For every preset × {1x, 2x, print}, `exportPage` decodes to exactly the table in §4.1. (Run at least 1x and 2x for all presets, plus print for A4 and the business cards, to keep CI fast; the Instagram story at print is rasterized without encoding.) Fractional custom sizes (100.5 × 50.5 px, 32.16 × 4.64 px whose print size lands on float noise just below .5, 85.5 × 54 mm, 3.5 × 2.25 in) are rasterized at 1x/2x/print against values computed from the dpi math, not copied from the table.
 2. **Editor path vs export path, byte-exact.**
    - *Editor path:* build a stage shaped like the real editor: **stage zoom ≠ 1 (e.g. 0.37) and a non-zero pan**, a content layer with **two page frames at different offsets**, each holding a `PageScene` root, and a chrome layer with a Transformer attached to two nodes, plus guide lines. Apply a scripted series of edits through `scene.update(doc_i, opts)`: move, resize (through `bakeTransform`), restyle, reorder, delete, insert, hide/unhide, change a filter, **a no-op drag commit** (node moved live, then the store commits the original values: `update(doc, { dirty })` must restore it), **a font that loads after the scene was built** (`rebuildText`), and **change pixel ratio** (`setPixelRatio`) on the A4 fixture. End at `finalDoc`. Rasterize the second page with `rasterizePage(scene, s)`.
    - *Export path:* `exportPage(finalDoc, { scale: s })` on a fresh offscreen stage.
@@ -282,6 +297,9 @@ Tests:
 4. **Filter cache ratio.** Render a blurred image at s = 2 with a correctly ratioed cache, then deliberately with `cache({ pixelRatio: 1 })`. The images must differ (this guards against a regression to default caching), and the correctly cached one must equal the export.
 5. **Filter cache truncation.** At print, an image with neutral filters forced through the P-7 cache must equal the same image uncached, edge columns and rows included.
 6. **No edge seam.** A full-bleed `#000000` rect on A4 (1x and print) and on the EU card (2x) gives `#000000` in every pixel of the last column and row (P-8).
+7. **Filter cache limits.** A filtered image much larger than the page is cached only where the page shows it, and that crop changes no pixel (≤ 1 level at print); at ratio 16 the editor clamps the cache to the budget and the image stays visible; the export throws `CanvasLimitError` when even the crop does not fit.
+8. **Text.** RTL text with letter spacing or justify reaches the canvas as one `fillText` per line with `direction = 'rtl'` (`text.test.ts`), and translucent text with overlapping lines or glyphs never exceeds the element's alpha.
+9. **SVG raster.** A 24 × 24 two-tone SVG drawn at 600 × 600 has a crisp edge at 1x and print; resizing re-rasterizes (`resourcesOutdated`).
 
 ### 6.2 Browser e2e (Playwright, `/e2e`)
 
@@ -308,7 +326,11 @@ The fixtures use real Google Fonts in this test, which is acceptable because the
 | **Missing font variants** make css2 answer 400 for the whole family. | Catalogued families request only existing variants; per-variant retry otherwise (§3.1, schema §9). |
 | **Equal-value updates** (no-op drag, clamped resize) keep live node attrs. | `update(doc, { dirty })` after every drag/transform (§2.2). |
 | **Narrow text boxes** silently drop text in Konva. | Konva width ≥ widest grapheme (§3.3). |
-| **Decoded size ≠ declared size** (renditions, EXIF, SVG). | Crops scaled by `computeImageLayout(el, asset, decoded)`; SVG rasterized at declared size; server bakes EXIF (§3.2). |
+| **Decoded size ≠ declared size** (renditions, EXIF, SVG). | Crops scaled by `computeImageLayout(el, asset, decoded)`; SVG rasterized at declared size × `svgRasterScale`; server bakes EXIF (§3.2). |
+| **SVG rasterized at its (small) declared size** and blurry once enlarged. | §3.2: raster factor from how large the document draws it; `resourcesOutdated` after resizes. |
+| **Filter cache over the canvas limits**: the image silently vanishes. | §3.5 cache size limits: crop to the page, clamp (editor) or `CanvasLimitError` (export). |
+| **RTL text with letter spacing or justify** drawn per grapheme left to right (mirrored Hebrew, unshaped Arabic). | §3.3 bidi: explicit `direction`, native runs for RTL. |
+| **Element opacity on text** applied per draw call (overlaps darker). | §3.3: isolated group for translucent text. |
 | **jsPDF orientation and page limit.** | `pdfPageLayout`: explicit orientation, `userUnit` above 14 400 pt (§5). |
 | **Text rendering differs across OSes and browsers.** | Irrelevant to parity: the editor and the export run in the same browser. Templates may reflow slightly between browsers, which is accepted; Plakat promises "what you see is what you export", not cross-machine identity. |
 | **Filter cache at the wrong ratio**, which blurs images and changes blur strength. | P-7: pass `pixelRatio` explicitly and re-cache on ratio change. |
@@ -331,7 +353,7 @@ The fixtures use real Google Fonts in this test, which is acceptable because the
 | P-4 | Images must be CORS-clean; third-party images are imported into the server's uploads (no proxy). |
 | P-5 | Text vertical alignment is computed; text nodes never get a fixed height. |
 | P-6 | Konva function filters only. |
-| P-7 | Filter cache `pixelRatio` equals the effective output ratio, is always explicit, and is padded (`offset`) against truncation. |
+| P-7 | Filter cache `pixelRatio` equals the effective output ratio, is always explicit, and is padded (`offset`) against truncation; caches over the canvas limits are cropped to the page, then clamped (editor) or refused (export). |
 | P-8 | Page box mapped exactly onto `W × H` by `contentScaleX/Y`; canvases use the nominal `s`. |
 | P-9 | One `rasterizePage` for editor and export: `SceneCanvas` of `(W + 0.5)/s`, `root.drawScene(canvas, root)`, exact dimensions asserted. |
 | P-10 | PDF is a raster at print DPI; vector PDF is future work. |

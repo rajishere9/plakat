@@ -10,6 +10,7 @@ import {
   serializeDocument,
 } from './portable.ts';
 import { readExampleJson } from './test-utils.ts';
+import { base64DataUriLength, MAX_ASSET_BYTES, MAX_ASSET_SRC_LENGTH } from './validation.ts';
 import type { PlakatDocument } from './types.ts';
 
 describe('portable .plakat.json files', () => {
@@ -61,6 +62,18 @@ describe('portable .plakat.json files', () => {
     expect(Array.from(dataUriToBytes(bundled.assets['as_remote']!.src).bytes)).toEqual([1, 2, 3, 250]);
     expect(doc.assets['as_remote']!.src).toBe('/api/uploads/abc.png'); // input untouched
   });
+
+  it('the largest accepted asset (MAX_ASSET_BYTES) still round-trips as a portable file', async () => {
+    const doc = createDocument();
+    const { id, asset } = createImageAsset({ src: '/uploads/big.svg', width: 10, height: 10, mimeType: 'image/svg+xml' });
+    doc.assets[id] = asset;
+    const bytes = new Uint8Array(MAX_ASSET_BYTES).fill(0x41);
+    const bundled = await bundleAssets(doc, async () => ({ bytes }));
+    expect(bundled.assets[id]!.src.length).toBe(base64DataUriLength(MAX_ASSET_BYTES, 'image/svg+xml'));
+    expect(bundled.assets[id]!.src.length).toBeLessThanOrEqual(MAX_ASSET_SRC_LENGTH);
+    const text = serializeDocument(bundled);
+    expect(parseDocument(text).assets[id]!.src.length).toBe(bundled.assets[id]!.src.length);
+  }, 60_000);
 
   it('propagates fetch failures', async () => {
     const doc = createDocument();

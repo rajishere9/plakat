@@ -85,7 +85,7 @@ export class UploadStore {
        ON CONFLICT (sha256) DO UPDATE SET attribution = COALESCE(uploads.attribution, EXCLUDED.attribution)`,
       [
         sha256,
-        (options.filename ?? file).slice(0, 255),
+        (options.filename ?? file).replace(/\u0000/g, '').slice(0, 255),
         info.mimeType,
         info.width,
         info.height,

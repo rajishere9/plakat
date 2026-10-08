@@ -1,7 +1,8 @@
 /**
  * (c) Export dimensions through the real export dialog (render-export-pipeline.md §4.1,
  * §5, P-11): PNG and JPG at 1x / 2x / print match the §4.1 table exactly; PDF has the
- * right page count, page size in pt and orientation; a multi-page PNG export is a ZIP
+ * right page count, page size in pt and orientation (YouTube thumbnail and both business
+ * cards landscape, A4 portrait); a multi-page PNG export is a ZIP
  * with one correctly sized `<slug>-NN.png` per page.
  */
 import { expect, test, type Page } from '@playwright/test';
@@ -20,7 +21,10 @@ import {
 type Scale = '1x' | '2x' | 'print';
 
 interface Case {
+  /** Text on the Home preset card. */
   preset: string;
+  /** Test name (default: preset). */
+  name?: string;
   title: string;
   slug: string;
   dims: Record<Scale, [number, number]>;
@@ -50,6 +54,22 @@ const CASES: Case[] = [
     dims: { '1x': [794, 1123], '2x': [1587, 2245], print: [2480, 3508] },
     pdf: { width: 595.28, height: 841.89, orientation: 'portrait' },
   },
+  {
+    preset: '3.5 × 2 in',
+    name: 'Business card US (landscape)',
+    title: 'Dims Card US',
+    slug: 'dims-card-us',
+    dims: { '1x': [336, 192], '2x': [672, 384], print: [1050, 600] },
+    pdf: { width: 252, height: 144, orientation: 'landscape' },
+  },
+  {
+    preset: '85 × 55 mm',
+    name: 'Business card EU (landscape)',
+    title: 'Dims Card EU',
+    slug: 'dims-card-eu',
+    dims: { '1x': [321, 208], '2x': [643, 416], print: [1004, 650] },
+    pdf: { width: (85 / 25.4) * 72, height: (55 / 25.4) * 72, orientation: 'landscape' },
+  },
 ];
 
 /** New design from a preset, titled, with a full-bleed shape so there is content. */
@@ -64,7 +84,7 @@ async function setUp(page: Page, c: Case): Promise<void> {
 }
 
 for (const c of CASES) {
-  test(`${c.preset}: PNG and JPG at 1x / 2x / print${c.pdf ? ', PDF' : ''}`, async ({ page }) => {
+  test(`${c.name ?? c.preset}: PNG and JPG at 1x / 2x / print${c.pdf ? ', PDF' : ''}`, async ({ page }) => {
     const errors = trackPageErrors(page);
     await setUp(page, c);
     const dialogDims = page.getByTestId('export-dimensions');

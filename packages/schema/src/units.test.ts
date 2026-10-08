@@ -57,6 +57,35 @@ describe('exportPixelSize', () => {
     expect(exportPixelSize({ width: 0.1, height: 0.1 }, 1)).toMatchObject({ width: 1, height: 1 });
   });
 
+  it('snaps float noise that sits just below .5 (only snap() gets these right)', () => {
+    // 32.16 * 3.125 = 100.49999999999999 and 4.64 * 3.125 = 14.499999999999998 in doubles;
+    // the exact products are 100.5 and 14.5, which round half up to 101 and 15.
+    expect(32.16 * 3.125).toBeLessThan(100.5);
+    expect(4.64 * 3.125).toBeLessThan(14.5);
+    expect(exportPixelSize({ width: 32.16, height: 4.64 }, 'print')).toMatchObject({ width: 101, height: 15 });
+  });
+
+  it('fractional custom sizes, derived independently (ceil(x - 0.5) == round half up for x > 0)', () => {
+    const roundHalfUp = (x: number) => Math.floor(x + 0.5);
+    const cases: [number, number, number, [number, number]][] = [
+      [100.5, 50.5, 1, [101, 51]],
+      [100.5, 50.5, 2, [201, 101]],
+      [100.5, 50.5, 3.125, [314, 158]],
+      // 85.5 x 54 mm at 300 dpi = 85.5 / 25.4 * 300 = 1009.84 -> 1010; 54 / 25.4 * 300 = 637.80 -> 638
+      [mmToPx(85.5), mmToPx(54), 3.125, [roundHalfUp((85.5 / 25.4) * 300), roundHalfUp((54 / 25.4) * 300)]],
+      [mmToPx(85.5), mmToPx(54), 1, [323, 204]],
+      [mmToPx(85.5), mmToPx(54), 2, [646, 408]],
+      // 3.5 x 2.25 in at 300 dpi = 1050 x 675 exactly
+      [toPx(3.5, 'in'), toPx(2.25, 'in'), 3.125, [1050, 675]],
+    ];
+    for (const [w, h, s, dims] of cases) {
+      const px = exportPixelSize({ width: w, height: h }, s);
+      expect([px.width, px.height], `${w}x${h} @ ${s}`).toEqual(dims);
+    }
+    expect(roundHalfUp((85.5 / 25.4) * 300)).toBe(1010);
+    expect(roundHalfUp((54 / 25.4) * 300)).toBe(638);
+  });
+
   it('accepts custom numeric scales and rejects invalid ones', () => {
     expect(exportPixelSize({ width: 1080, height: 1920 }, 0.5)).toMatchObject({ width: 540, height: 960 });
     expect(() => exportPixelSize({ width: 10, height: 10 }, 0)).toThrow(RangeError);
@@ -79,6 +108,12 @@ describe('unit conversions', () => {
     expect(a4.height).toBeCloseTo(841.8898, 3);
     expect(pdfPageSizePt(presetToPageSize('business-card'))).toEqual({ width: 252, height: 144 });
     expect(pdfPageSizePt(presetToPageSize('instagram-post'))).toEqual({ width: 810, height: 810 });
+  });
+
+  it('ignores a physical size that disagrees with the px size (the PDF image would be stretched)', () => {
+    const square = { width: 1080, height: 1080, physical: { width: 210, height: 297, unit: 'mm' as const } };
+    expect(pdfPageSizePt(square)).toEqual({ width: 810, height: 810 });
+    expect(pdfPageLayout(square).orientation).toBe('portrait');
   });
 
   it('flags outputs that exceed canvas limits', () => {
@@ -121,7 +156,7 @@ describe('pdfPageLayout', () => {
     expect(big.userUnit).toBe(2);
     expect(big.width).toBe(7_500);
     expect(Math.max(big.width, big.height)).toBeLessThanOrEqual(PDF_MAX_PAGE_UNITS);
-    const huge = pdfPageLayout({ width: 1, height: 1, physical: { width: 10_000, height: 10, unit: 'mm' } }); // 28 346 pt
+    const huge = pdfPageLayout({ width: mmToPx(10_000), height: mmToPx(10), physical: { width: 10_000, height: 10, unit: 'mm' } }); // 28 346 pt
     expect(huge.userUnit).toBe(2);
     expect(huge.width * huge.userUnit).toBeCloseTo(28_346.46, 1);
     expect(pdfPageLayout({ width: 19_200, height: 10, physical: null }).userUnit).toBe(1); // exactly 14 400 pt

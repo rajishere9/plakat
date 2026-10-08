@@ -2,7 +2,7 @@
 import { act, cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createBrandKit, createDocument, createTextElement, setBrandFont, type ShapeElement, type TextElement } from '@plakat/schema';
-import type { AssetProviderInfo, TemplateSummary } from '../api/index.ts';
+import { ApiError, type AssetProviderInfo, type TemplateSummary } from '../api/index.ts';
 import { createApiStub, createTestServices, docWith, renderWithServices } from '../app/test-utils.tsx';
 import { BrandPanel } from './BrandPanel.tsx';
 import { ElementsPanel } from './ElementsPanel.tsx';
@@ -147,6 +147,27 @@ describe('PhotosPanel', () => {
     const asset = Object.values(services.store.getState().document.assets)[0]!;
     expect(asset.src).toBe('/uploads/abc.jpg');
     expect(asset.source).toMatchObject({ provider: 'openverse', author: 'Ann', license: 'CC BY 2.0' });
+  });
+});
+
+describe('PhotosPanel errors', () => {
+  const provider: AssetProviderInfo = { id: 'openverse', name: 'Openverse', description: 'Free photos', requiresKey: false, configured: true, homepage: '', licenseNote: '' };
+
+  it('shows a friendly message with a Retry button that re-runs the same search', async () => {
+    const item = { id: 'img1', title: 'Latte', thumbUrl: 'https://x/t.jpg', previewUrl: 'https://x/p.jpg', width: 400, height: 300, creator: 'Ann', creatorUrl: null, license: 'CC BY 2.0', licenseUrl: null, pageUrl: 'https://x/page' };
+    const searchAssets = vi
+      .fn()
+      .mockRejectedValueOnce(new ApiError(502, 'provider_error', 'Openverse request failed: fetch failed'))
+      .mockResolvedValueOnce({ items: [item], page: 1, hasMore: false });
+    const api = createApiStub({ listAssetProviders: vi.fn(() => Promise.resolve([provider])), searchAssets });
+    renderWithServices(<PhotosPanel />, createTestServices({ document: docWith([]), api }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Coffee' }));
+    expect(await screen.findByText('Photo search is unavailable right now.', {}, { timeout: 2000 })).toBeTruthy();
+    expect(screen.getByText('Openverse request failed: fetch failed')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(await screen.findByRole('button', { name: 'Insert photo: “Latte” · by Ann · CC BY 2.0' })).toBeTruthy();
+    expect(searchAssets).toHaveBeenCalledTimes(2);
+    expect(searchAssets).toHaveBeenLastCalledWith('openverse', { q: 'Coffee', page: 1, perPage: 20 });
   });
 });
 

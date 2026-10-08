@@ -6,8 +6,8 @@ import { useState, type JSX } from 'react';
 import type { TemplateSummary } from '../api/index.ts';
 import { categoryLabel } from '../app/format.ts';
 import { templateCategories, useAsync, useTemplates } from '../app/hooks.ts';
-import { navigate } from '../app/router.ts';
 import { useServices, useStoreApi } from '../app/services.tsx';
+import { useUseTemplate } from '../app/UseTemplateDialog.tsx';
 import { errorMessage, toast } from '../app/toasts.tsx';
 import { Icon } from '../components/Icon.tsx';
 import { TemplateCard } from '../components/TemplateCard.tsx';
@@ -85,17 +85,8 @@ export function TemplatesPanel({ onClose }: { onClose?: () => void }): JSX.Eleme
     }
   };
 
-  const useInNewDesign = async (t: TemplateSummary) => {
-    setBusyId(t.id);
-    try {
-      const id = await services.persistence.createProject({ templateId: t.id });
-      navigate({ name: 'design', id });
-    } catch (e) {
-      toast.error('Could not create a design from the template', { detail: errorMessage(e) });
-    } finally {
-      setBusyId(null);
-    }
-  };
+  const useTpl = useUseTemplate();
+  const useInNewDesign = (t: TemplateSummary) => useTpl.start({ templateId: t.id }, t.id);
 
   return (
     <PanelShell
@@ -130,7 +121,7 @@ export function TemplatesPanel({ onClose }: { onClose?: () => void }): JSX.Eleme
               key={t.id}
               summary={t}
               compact
-              busy={busyId === t.id}
+              busy={busyId === t.id || useTpl.busyKey === t.id}
               actionLabel="Apply template"
               onOpen={() => void apply(t)}
               menu={[
@@ -143,6 +134,7 @@ export function TemplatesPanel({ onClose }: { onClose?: () => void }): JSX.Eleme
           ))}
         </div>
       )}
+      {useTpl.element}
     </PanelShell>
   );
 }

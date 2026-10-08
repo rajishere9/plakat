@@ -239,7 +239,7 @@ export interface EditorActions {
   /** Adds an image element for an asset (new record or existing id). Fits 60 % of the short page side. */
   addImage(asset: AssetInput, partial?: Partial<Pick<PlakatElement, 'x' | 'y' | 'width' | 'height' | 'name'>>, options?: AddElementOptions): Id;
   /** Inserts foreign elements (+ their assets) via importElements; returns new ids. */
-  insertElements(elements: readonly PlakatElement[], assets?: Readonly<Record<Id, Asset>>, options?: AddElementOptions & { offset?: { x: number; y: number } }): Id[];
+  insertElements(elements: readonly PlakatElement[], assets?: Readonly<Record<Id, Asset>>, options?: AddElementOptions & { offset?: { x: number; y: number }; label?: string }): Id[];
   /** Registers an asset (dedupe by src) without placing it; returns its id. */
   addAsset(asset: AssetInput): Id;
 
@@ -251,6 +251,11 @@ export interface EditorActions {
   /** Commits Konva Transformer/drag results via bakeTransform; always reports ids as touched. Skips locked elements and unrepresentable transforms. */
   commitTransforms(transforms: Record<Id, NodeTransform>, options?: { label?: string }): void;
   /** Moves elements by a delta (drag end with snapping applied by the canvas). */
+  /**
+   * Moves elements (any page; locked ones stay) onto page `pageId`, on top, shifted by dx/dy
+   * (target page px), as one undo step; selects them and activates that page. Returns the moved ids.
+   */
+  moveElementsToPage(ids: readonly Id[], pageId: Id, dx: number, dy: number): Id[];
   moveElements(ids: Id[], dx: number, dy: number, options?: CommitOptions & { label?: string }): void;
   /** Rotates each element about its own center to `rotation` degrees. */
   setRotation(ids: Id[], rotation: number, options?: CommitOptions): void;

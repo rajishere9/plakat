@@ -21,6 +21,13 @@ export function attributionText(item: Pick<AssetSearchItem, 'title' | 'creator' 
   return parts.join(' · ');
 }
 
+/** User-facing text for a failed search; the raw server message is kept as secondary detail. */
+export function searchErrorMessage(e: unknown): { message: string; detail: string | null } {
+  if (e instanceof ApiError && e.code === 'rate_limited') return { message: 'The photo service is rate limiting requests. Try again in a minute.', detail: null };
+  if (e instanceof ApiError && (e.code === 'network_error' || e.status === 0)) return { message: 'Could not reach the server. Check your connection and try again.', detail: null };
+  return { message: 'Photo search is unavailable right now.', detail: errorMessage(e) };
+}
+
 export function PhotosPanel({ onClose }: { onClose?: () => void }): JSX.Element {
   const services = useServices();
   const store = useStoreApi();
@@ -32,7 +39,7 @@ export function PhotosPanel({ onClose }: { onClose?: () => void }): JSX.Element 
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<{ message: string; detail: string | null; page: number } | null>(null);
   const [importing, setImporting] = useState<string | null>(null);
   const sentinel = useRef<HTMLDivElement>(null);
   const reqSeq = useRef(0);
@@ -58,7 +65,7 @@ export function PhotosPanel({ onClose }: { onClose?: () => void }): JSX.Element 
       setHasMore(r.hasMore);
     } catch (e) {
       if (seq !== reqSeq.current) return;
-      setError(e instanceof ApiError && e.code === 'rate_limited' ? 'The photo service is rate limiting requests. Try again in a minute.' : errorMessage(e));
+      setError({ ...searchErrorMessage(e), page: pageNo });
       setHasMore(false);
     } finally {
       if (seq === reqSeq.current) setLoading(false);
@@ -151,7 +158,15 @@ export function PhotosPanel({ onClose }: { onClose?: () => void }): JSX.Element 
               </div>
             </>
           )}
-          {error && <Notice tone="error">{error}</Notice>}
+          {error && (
+            <Notice tone="error">
+              <p>{error.message}</p>
+              {error.detail && <p className="panel__fineprint">{error.detail}</p>}
+              <Button size="sm" onClick={() => void load(error.page, error.page === 1)} disabled={loading}>
+                Retry
+              </Button>
+            </Notice>
+          )}
           {q && !loading && !error && results.length === 0 && (
             <EmptyState icon="photos" title="No photos found" compact>
               Try a different search.
