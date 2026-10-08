@@ -28,6 +28,7 @@ import {
   mountPageScene,
   prepareResources,
   rasterizePage,
+  resourcesOutdated,
   type RenderEnv,
   type Resources,
 } from '@plakat/renderer';
@@ -911,6 +912,12 @@ export class WorkspaceController {
     const resourcePages = new Set<Id>([...created]);
     if (change.rebuildText.length > 0 || change.assetsChanged) for (const id of touchedPages) resourcePages.add(id);
     for (const id of touchedPages) if (this.pageNeedsImages(doc, id)) resourcePages.add(id);
+    // An SVG's raster scale depends on how large the WHOLE document draws it (pipeline §3.2):
+    // resizing (or deleting) one element can change the bitmap every page using that asset
+    // needs, so look past the touched pages and re-rasterize where the scale changed.
+    if (resourcesOutdated(doc, this.resources)) {
+      for (const page of doc.pages) if (!resourcePages.has(page.id) && resourcesOutdated(doc, this.resources, [page.id])) resourcePages.add(page.id);
+    }
     const pageIds = doc.pages.map((p) => p.id).filter((id) => resourcePages.has(id));
     const textIds = [...change.rebuildText, ...doc.pages.filter((p) => created.includes(p.id)).flatMap((p) => p.elements.filter((e) => e.type === 'text').map((e) => e.id))];
     if (pageIds.length > 0) this.ensureResources(pageIds, textIds);

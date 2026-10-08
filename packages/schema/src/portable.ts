@@ -114,7 +114,8 @@ export interface FetchAssetFetcherOptions {
    * Whether absolute http(s) srcs may be fetched (default true, fine in a browser
    * where CORS applies). SERVER-SIDE callers must pass `false` or an allow-list
    * predicate: srcs come from untrusted files, so an open fetcher is an SSRF vector.
-   * Remote assets of imported files are fetched only through the allow-listed proxy.
+   * (The Plakat server never bundles remote srcs: it downloads them into its uploads,
+   * SSRF-guarded, when a document is written.)
    */
   allowRemote?: boolean | ((url: URL) => boolean);
 }

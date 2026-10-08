@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { MAX_ASSET_BYTES } from '@plakat/schema';
 
 /** Repository root (apps/server/src -> ../../..). */
 export const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
@@ -40,7 +41,7 @@ export interface Config {
   openverse: OpenverseConfig;
   /** Max JSON body (documents, imports, brand kits). */
   maxBodyBytes: number;
-  /** Max upload / provider download size. */
+  /** Max upload / provider / remote-src download size (= schema MAX_ASSET_BYTES). */
   maxUploadBytes: number;
   /** Max thumbnail PNG size. */
   maxThumbnailBytes: number;
@@ -100,7 +101,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       apiBase: (str(env, 'OPENVERSE_API_URL') ?? 'https://api.openverse.org').replace(/\/+$/, ''),
     },
     maxBodyBytes: int(env, 'MAX_BODY_MB', 40) * MiB,
-    maxUploadBytes: 25 * MiB,
+    // One asset's byte cap: anything larger could never be embedded in a valid document.
+    maxUploadBytes: MAX_ASSET_BYTES,
     maxThumbnailBytes: 2 * MiB,
     logLevel: str(env, 'LOG_LEVEL') ?? 'info',
   };

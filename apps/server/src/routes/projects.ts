@@ -1,4 +1,13 @@
-import { createId, PORTABLE_MIME_TYPE, serializeDocument, type PageSize, type PlakatDocument } from '@plakat/schema';
+import {
+  createId,
+  DocumentValidationError,
+  MigrationError,
+  PORTABLE_MIME_TYPE,
+  serializeDocument,
+  UnsupportedSchemaVersionError,
+  type PageSize,
+  type PlakatDocument,
+} from '@plakat/schema';
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import { bodyField, idParam, toIso, type AppContext } from '../context.ts';
 import {
@@ -140,16 +149,42 @@ export function registerProjectRoutes(app: FastifyInstance, ctx: AppContext): vo
     const id = idParam(req.params, 'Project');
     const { rows } = await db.query<{ document: unknown }>('SELECT document FROM projects WHERE id = $1', [id]);
     if (!rows[0]) throw notFound('Project');
-    const doc = await bundleDocumentForExport(loadStoredDocument(rows[0].document), ctx.uploads);
-    return sendPortableFile(reply, doc);
+    return sendStoredAsPortableFile(ctx, reply, rows[0].document);
   });
 }
 
+function notExportable(error: unknown): HttpError | null {
+  if (!(error instanceof DocumentValidationError || error instanceof MigrationError || error instanceof UnsupportedSchemaVersionError)) return null;
+  const issues = error instanceof DocumentValidationError ? error.issues.slice(0, 100) : [{ path: '(root)', message: error.message }];
+  return new HttpError(422, 'not_exportable', 'The stored document cannot be exported as a valid portable file', { issues });
+}
+
+/**
+ * Stored row -> bundled portable download. A stored document that no longer loads, or
+ * whose bundled form fails validation, is a server-side state problem rather than a bad
+ * request: 422 `not_exportable` (with issues), never 400 or 500.
+ */
+export async function sendStoredAsPortableFile(ctx: AppContext, reply: FastifyReply, stored: unknown) {
+  let doc: PlakatDocument;
+  try {
+    doc = await bundleDocumentForExport(loadStoredDocument(stored), ctx.uploads);
+  } catch (error) {
+    throw notExportable(error) ?? error;
+  }
+  return sendPortableFile(reply, doc);
+}
+
 export function sendPortableFile(reply: FastifyReply, doc: PlakatDocument) {
+  let body: string;
+  try {
+    body = serializeDocument(doc);
+  } catch (error) {
+    throw notExportable(error) ?? error;
+  }
   const filename = `${slugify(doc.meta.title)}.plakat.json`;
   return reply
     .header('Content-Type', `${PORTABLE_MIME_TYPE}; charset=utf-8`)
     .header('Content-Disposition', `attachment; filename="${filename}"`)
     .header('Cache-Control', 'no-store')
-    .send(serializeDocument(doc));
+    .send(body);
 }

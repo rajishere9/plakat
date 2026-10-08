@@ -4,6 +4,7 @@ import {
   isDataUri,
   loadDocument,
   normalizeDocument,
+  pruneUnusedAssets,
   type Asset,
   type Id,
   type PlakatDocument,
@@ -166,12 +167,14 @@ export async function internalizeDocumentAssets(doc: PlakatDocument, uploads: Up
 }
 
 /**
- * Portable export: every asset becomes a data: URI. Only this server's own uploads
- * are read (from disk); remote or other root-relative srcs are never fetched
- * server-side (SSRF) and make the export fail with 422.
+ * Portable export: unreferenced registry entries are dropped first (a stale entry would
+ * bloat the file and could make an otherwise exportable document fail), then every
+ * asset becomes a data: URI. Only this server's own uploads are read (from disk); remote
+ * or other root-relative srcs are never fetched server-side (SSRF) and make the export
+ * fail with 422.
  */
 export async function bundleDocumentForExport(doc: PlakatDocument, uploads: UploadStore): Promise<PlakatDocument> {
-  return bundleAssets(doc, async (src, assetId) => {
+  return bundleAssets(pruneUnusedAssets(doc), async (src, assetId) => {
     const bytes = await uploads.readBySrc(src);
     if (!bytes) {
       throw new HttpError(422, 'asset_not_bundlable', `Asset "${assetId}" (${src.slice(0, 200)}) cannot be embedded: only this server's uploads can be bundled`, {

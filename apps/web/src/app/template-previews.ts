@@ -1,8 +1,9 @@
 /**
  * Template gallery previews. Uses the server thumbnail when there is one; otherwise
  * fetches the template, renders its first page with @plakat/renderer (exportPage) and,
- * when every font loaded, uploads the result as the template's thumbnail so the next
- * visitor gets it for free (best effort; errors are ignored).
+ * when every font loaded, uploads the result as a user template's thumbnail so the next
+ * visitor gets it for free (best effort; errors are ignored). Built-in templates' thumbnails
+ * cannot be set by clients (403), so their previews are rendered once per session.
  */
 import type { TemplateSummary } from '../api/index.ts';
 import type { AppServices } from './services.tsx';
@@ -33,7 +34,8 @@ export function templatePreviewUrl(summary: TemplateSummary, services: Pick<AppS
           strict = false;
           blob = await services.renderPreview(document, page.id, PREVIEW_MAX_SIDE);
         }
-        if (strict) void services.api.uploadTemplateThumbnail(summary.id, blob).catch(() => undefined);
+        // Built-in thumbnails are read-only on the server (403): render them per session.
+        if (strict && !summary.builtIn) void services.api.uploadTemplateThumbnail(summary.id, blob).catch(() => undefined);
         return typeof URL.createObjectURL === 'function' ? URL.createObjectURL(blob) : null;
       } catch {
         cache.delete(key);

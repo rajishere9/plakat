@@ -378,7 +378,7 @@ export function Home(): JSX.Element {
                     ) : (
                       <PresetShape width={p.width} height={p.height} />
                     )}
-                    <span className="preset-card__label">{p.label.replace(/\s*\(.*\)$/, '')}</span>
+                    <span className="preset-card__label">{p.label.replace(/\s*\(([^,()]+),.*\)$/, ' ($1)').replace(/\s*\([^)]*×[^)]*\)$/, '')}</span>
                     <span className="preset-card__size">{label.primary}</span>
                     {label.secondary && <span className="preset-card__size preset-card__size--muted">{label.secondary}</span>}
                   </button>

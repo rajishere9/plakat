@@ -86,6 +86,8 @@ Then open http://localhost:8787. Compose starts PostgreSQL 17 and a single Plaka
 
 By default compose publishes the port on **all** host interfaces. Set `PLAKAT_BIND=127.0.0.1` in `.env` to keep it on your own machine, and read [Security](#security) before exposing it.
 
+**Opening it from another machine.** An IP address (`http://192.168.1.20:8787`), a single-label name (`http://nas:8787`) or a `.local` / `.internal` / `.home.arpa` name works as is. For any other host name, such as `plakat.example.com` behind a reverse proxy, set `PUBLIC_URL=https://plakat.example.com` in `.env` (and list further names in `ALLOWED_HOSTS`), then run `docker compose up -d` again. Without that, the server answers `403 host_not_allowed`, because it checks host names to block DNS-rebinding attacks.
+
 You can also run the image alone with the embedded database: `docker build -t plakat . && docker run -p 127.0.0.1:8787:8787 -v plakat-data:/data plakat`.
 
 > The `Dockerfile` and `docker-compose.yml` are new. They have been reviewed, and the CI workflow builds the image on every push, but they have not been run in production yet. Please open an issue if something does not work.
@@ -141,7 +143,7 @@ Used only by `docker compose`: `POSTGRES_PASSWORD` (default `plakat`, must be UR
 
 Used only in development: `PLAKAT_API_URL` (where the Vite dev server proxies the API, default `http://localhost:8787`). The e2e variables are listed in [CONTRIBUTING.md](CONTRIBUTING.md#running-the-tests).
 
-Fixed limits: uploads and provider downloads are capped at 25 MiB, thumbnails at 2 MiB, and a document can hold at most 1000 assets.
+Fixed limits: uploads, provider downloads and remote image srcs are capped at 25 MiB (the schema's `MAX_ASSET_BYTES`), thumbnails at 2 MiB and 4096 px per side, a document can hold at most 1000 assets, and one save or import downloads at most 50 new remote image URLs.
 
 ## Security
 

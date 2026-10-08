@@ -144,8 +144,8 @@ Stored documents written by an older Plakat are migrated when they are read and 
 | Limit | Value | |
 |---|---|---|
 | JSON request body | `MAX_BODY_MB`, default 40 MiB | designs, template imports, brand kits |
-| Upload / provider download | 25 MiB per image | PNG, JPEG, WebP, GIF, SVG |
-| Thumbnail | 2 MiB | |
+| Upload / provider or remote-src download | 25 MiB per image (`MAX_ASSET_BYTES`) | PNG, JPEG, WebP, GIF, SVG |
+| Thumbnail | 2 MiB, 4096 px per side | PNG only; built-in templates' thumbnails are read-only |
 | Assets per document | 1000 | |
 | New remote image URLs per save/import | 50 | downloaded into uploads, with SSRF guards |
 

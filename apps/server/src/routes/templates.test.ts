@@ -17,6 +17,7 @@ import {
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { seedBuiltInTemplates } from '../templates/seed.ts';
 import { createTestApp, makePng, type TestApp } from '../test-utils.ts';
+import { THUMBNAIL_MAX_SIDE, thumbnailUrl, verifyThumbnailPng } from './thumbnails.ts';
 
 /** A valid portable template built with the schema factories. */
 function buildTemplate(id: string, title: string, category: string, color: [number, number, number, number] = [0, 128, 255, 255]): PlakatDocument {
@@ -93,16 +94,71 @@ describe('built-in template seeding', () => {
     expect(put.statusCode).toBe(403);
   });
 
-  it('re-seeding drops the thumbnail of a changed file and removes deleted files', async () => {
+  it('refuses client thumbnails for built-ins (403); thumbnails must be real PNGs of sane size', async () => {
     const png = makePng(2, 2);
-    const thumb = await t.app.inject({ method: 'PUT', url: '/api/templates/tpl_builtin_sale/thumbnail', headers: { 'content-type': 'image/png' }, payload: png });
-    expect(thumb.statusCode).toBe(200);
+    const put = (url: string, payload: Buffer) => t.app.inject({ method: 'PUT', url, headers: { 'content-type': 'image/png' }, payload });
+    const builtInPut = await put('/api/templates/tpl_builtin_sale/thumbnail', png);
+    expect(builtInPut.statusCode).toBe(403);
+    expect(builtInPut.json().error.code).toBe('built_in_template');
+    const item = (await t.app.inject({ method: 'GET', url: '/api/templates' })).json().items.find((i: { id: string }) => i.id === 'tpl_builtin_sale');
+    expect(item.thumbnailUrl).toBeNull();
+    expect((await put('/api/templates/doc_nosuchtpl1/thumbnail', png)).statusCode).toBe(404);
+
+    const user = await t.app.inject({ method: 'POST', url: '/api/templates', payload: { document: buildTemplate('doc_thumbuser1', 'Thumbs', 'x') } });
+    expect(user.statusCode).toBe(201);
+    const url = `/api/templates/${user.json().id}/thumbnail`;
+    expect((await put(url, png)).statusCode).toBe(200);
+    expect((await put(url, makePng(THUMBNAIL_MAX_SIDE, 1))).statusCode).toBe(200);
+
+    // Signature only, IHDR missing / not first / wrong length, bad bit depth, a JPEG: 415.
+    const sig = png.subarray(0, 8);
+    const ihdrWithLength = (len: number) => Buffer.concat([sig, Buffer.from([0, 0, 0, len]), png.subarray(12)]);
+    const badDepth = Buffer.from(png);
+    badDepth[24] = 7;
+    for (const [label, body] of [
+      ['signature only', Buffer.concat([sig, Buffer.alloc(40)])],
+      ['IHDR not first', Buffer.concat([sig, Buffer.from([0, 0, 0, 13]), Buffer.from('IDAT'), png.subarray(16)])],
+      ['IHDR length 12', ihdrWithLength(12)],
+      ['bit depth 7', badDepth],
+      ['truncated', png.subarray(0, 20)],
+      ['jpeg', Buffer.from([0xff, 0xd8, 0xff, 0xe0, ...Buffer.alloc(40)])],
+      ['html', Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>')],
+    ] as const) {
+      const res = await put(url, body);
+      expect(res.statusCode, label).toBe(415);
+      expect(res.json().error.code, label).toBe('unsupported_media_type');
+    }
+    // Real PNG headers with unreasonable dimensions: 422.
+    for (const [w, h] of [
+      [0, 10],
+      [10, 0],
+      [THUMBNAIL_MAX_SIDE + 1, 1],
+      [1, 0x7fffffff],
+    ]) {
+      const huge = Buffer.from(png);
+      huge.writeUInt32BE(w!, 16);
+      huge.writeUInt32BE(h!, 20);
+      const res = await put(url, huge);
+      expect(res.statusCode, `${w}x${h}`).toBe(422);
+      expect(res.json().error.code).toBe('invalid_thumbnail');
+    }
+    expect(verifyThumbnailPng(png)).toEqual({ width: 2, height: 2 });
+    expect((await t.app.inject({ method: 'DELETE', url: `/api/templates/${user.json().id}` })).statusCode).toBe(204);
+  });
+
+  it('re-seeding drops the thumbnail of a changed file and removes deleted files', async () => {
     const { db, uploads } = t.app.plakat;
+    // Clients cannot set built-in thumbnails (403); an operator could, directly.
+    const { rows } = await db.query<{ thumbnail_updated_at: Date }>(
+      'UPDATE templates SET thumbnail = $2, thumbnail_updated_at = clock_timestamp() WHERE id = $1 RETURNING thumbnail_updated_at',
+      ['tpl_builtin_sale', makePng(2, 2)],
+    );
+    const thumbUrl = thumbnailUrl('templates', 'tpl_builtin_sale', rows[0]!.thumbnail_updated_at);
 
     // Unchanged file: thumbnail survives.
     await seedBuiltInTemplates(db, uploads, templatesDir);
     let item = (await t.app.inject({ method: 'GET', url: '/api/templates' })).json().items.find((i: { id: string }) => i.id === 'tpl_builtin_sale');
-    expect(item.thumbnailUrl).toBe(thumb.json().thumbnailUrl);
+    expect(item.thumbnailUrl).toBe(thumbUrl);
 
     // Changed file: thumbnail reset.
     const changed = { ...builtIn, meta: { ...builtIn.meta, title: 'Summer sale v2' } };

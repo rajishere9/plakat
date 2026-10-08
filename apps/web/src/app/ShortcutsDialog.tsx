@@ -1,11 +1,15 @@
-/** Keyboard shortcuts help (from lib/shortcuts SHORTCUTS via getShortcutHelp). */
+/** Keyboard shortcuts help: the SHORTCUTS bindings (getShortcutHelp) plus canvas gestures (getGestureHelp). */
 import type { JSX } from 'react';
 import { Dialog } from '../components/Dialog.tsx';
 import { Kbd } from '../components/ui.tsx';
-import { detectPlatform, getShortcutHelp, type Platform } from '../lib/shortcuts.ts';
+import { detectPlatform, getGestureHelp, getShortcutHelp, type Platform } from '../lib/shortcuts.ts';
 
 export function ShortcutsDialog({ open, onClose, platform }: { open: boolean; onClose: () => void; platform?: Platform }): JSX.Element | null {
-  const groups = getShortcutHelp(platform ?? detectPlatform());
+  const p = platform ?? detectPlatform();
+  const groups: { group: string; items: { id: string; label: string; keys: string[] }[] }[] = [
+    ...getShortcutHelp(p),
+    { group: 'Mouse and canvas', items: getGestureHelp(p) },
+  ];
   return (
     <Dialog open={open} onClose={onClose} title="Keyboard shortcuts" size="lg">
       <div className="shortcuts">

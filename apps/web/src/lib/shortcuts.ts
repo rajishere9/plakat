@@ -284,3 +284,33 @@ export function getShortcutHelp(platform: Platform = detectPlatform()): { group:
   }
   return groups;
 }
+
+/** One row of pointer / modifier help: things the canvas does that are not SHORTCUTS bindings. */
+export interface GestureHelpItem {
+  id: string;
+  label: string;
+  keys: string[];
+}
+
+/**
+ * Canvas gestures and context keys, for the help dialog. These are handled by the canvas
+ * controller (canvas/controller.ts: doubleClick, handleEnter, pointerDown/Move, wheel,
+ * setShiftKey, setSpaceKey) and the layers panel, not by matchShortcut, so they are listed
+ * here by hand. Keep this list in sync with those handlers.
+ */
+export function getGestureHelp(platform: Platform = detectPlatform()): GestureHelpItem[] {
+  const modKey = platform === 'mac' ? '⌘' : 'Ctrl';
+  const shift = platform === 'mac' ? '⇧' : 'Shift';
+  const alt = platform === 'mac' ? '⌥' : 'Alt';
+  const plus = platform === 'mac' ? '' : '+';
+  return [
+    { id: 'editText', label: 'Edit text / crop image', keys: ['Double-click'] },
+    { id: 'enter', label: 'Edit the selected text / apply the crop', keys: ['Enter'] },
+    { id: 'addToSelection', label: 'Add to or remove from the selection', keys: [`${shift}${plus}Click`] },
+    { id: 'moveNoSnap', label: 'Move without snapping', keys: [`${alt}${plus}Drag`] },
+    { id: 'rotateStep', label: 'Rotate in 15° steps', keys: [`${shift}${plus}Rotate`] },
+    { id: 'pan', label: 'Pan the canvas', keys: ['Space+Drag', 'Scroll'] },
+    { id: 'zoomWheel', label: 'Zoom at the pointer', keys: [`${modKey}${plus}Scroll`] },
+    { id: 'layerMove', label: 'Move a layer up / down (layers panel)', keys: [`${alt}${plus}↑`, `${alt}${plus}↓`] },
+  ];
+}

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { FontLoadError, Konva, rasterizePage, renderPageWithResources, type RenderEnv } from '@plakat/renderer';
+import { decodedSvgScale, FontLoadError, Konva, rasterizePage, renderPageWithResources, svgRasterScale, type RenderEnv } from '@plakat/renderer';
 import { createDocument, createImageElement, createShapeElement, createTextElement, type Asset, type ImageElement, type PlakatDocument, type TextElement } from '@plakat/schema';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createEditorStore, type EditorStore } from '../store/editor-store.ts';
@@ -408,6 +408,34 @@ describe('WorkspaceController: reconciliation', () => {
     expect(c.env.imageLoads).toBe(2);
     expect(c.controller.getElementNode(id)).toBeDefined();
     expectParity(c, 0, 1);
+  });
+
+  it('re-rasterizes an SVG on every page using it when one of its elements is resized', async () => {
+    const svg: Asset = { type: 'image', mimeType: 'image/svg+xml', width: 24, height: 24, src: '/uploads/icon.svg', name: 'icon', source: null };
+    const doc = fixtureDoc();
+    doc.assets['icon'] = svg;
+    doc.pages[0]!.elements.push(createImageElement('icon', svg, { id: 'svg0', x: 10, y: 10, width: 24, height: 24 }));
+    doc.pages[1]!.elements.push(createImageElement('icon', svg, { id: 'svg1', x: 10, y: 10, width: 24, height: 24 }));
+    const c = await setup(doc);
+    const before = c.controller.getResources().images.get('icon')!;
+    expect(decodedSvgScale(before)).toBe(svgRasterScale(svg, 1));
+    const loads = c.env.imageLoads;
+
+    c.store.getState().actions.updateElement('svg0', { width: 600, height: 600 });
+    await c.controller.ready();
+    const after = c.controller.getResources().images.get('icon')!;
+    expect(after).not.toBe(before);
+    expect(decodedSvgScale(after)).toBe(svgRasterScale(svg, 25));
+    expect(c.env.imageLoads).toBe(loads + 1);
+    // The untouched page drawing the same asset got the new bitmap too (export would).
+    const node = c.controller.getElementNode('svg1') as unknown as Konva.Group;
+    expect(node.findOne<Konva.Image>((n: Konva.Node) => n instanceof Konva.Image)!.image()).toBe(after);
+    expectParity(c, 1, 1);
+
+    // Shrinking it again lowers the scale back (document-only, like the export).
+    c.store.getState().actions.updateElement('svg0', { width: 24, height: 24 });
+    await c.controller.ready();
+    expect(decodedSvgScale(c.controller.getResources().images.get('icon')!)).toBe(svgRasterScale(svg, 1));
   });
 
   it('a new document rebuilds everything', async () => {

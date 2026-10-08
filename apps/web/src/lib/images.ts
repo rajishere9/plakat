@@ -6,10 +6,12 @@
  * Files that need neither are passed through byte-for-byte. SVG and GIF are never
  * re-encoded (vector / animation would be lost).
  */
-import type { ImageMimeType } from '@plakat/schema';
+import { MAX_ASSET_BYTES, type ImageMimeType } from '@plakat/schema';
 
 export const MAX_UPLOAD_SIDE = 6000;
-export const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
+/** Largest upload the server accepts: one asset's byte cap (schema `MAX_ASSET_BYTES`). */
+export const MAX_UPLOAD_BYTES = MAX_ASSET_BYTES;
+const MAX_UPLOAD_MB = Math.round(MAX_UPLOAD_BYTES / (1024 * 1024));
 export const SUPPORTED_IMAGE_TYPES: readonly ImageMimeType[] = ['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'image/svg+xml'];
 /** `accept` attribute for file inputs. */
 export const IMAGE_ACCEPT = SUPPORTED_IMAGE_TYPES.join(',');
@@ -209,12 +211,12 @@ export async function normalizeUploadFile(file: File, options: NormalizeOptions 
   if (!mimeType) throw new UnsupportedImageError(`Unsupported file type: ${file.type || file.name}`);
 
   if (mimeType === 'image/svg+xml') {
-    if (file.size > MAX_UPLOAD_BYTES) throw new UnsupportedImageError('SVG files are limited to 25 MB');
+    if (file.size > MAX_UPLOAD_BYTES) throw new UnsupportedImageError(`SVG files are limited to ${MAX_UPLOAD_MB} MB`);
     const size = readSvgSize(await file.text());
     return { file, mimeType, width: size?.width ?? null, height: size?.height ?? null, transformed: false, orientation: 1 };
   }
   if (mimeType === 'image/gif') {
-    if (file.size > MAX_UPLOAD_BYTES) throw new UnsupportedImageError('GIF files are limited to 25 MB');
+    if (file.size > MAX_UPLOAD_BYTES) throw new UnsupportedImageError(`GIF files are limited to ${MAX_UPLOAD_MB} MB`);
     let width: number | null = null;
     let height: number | null = null;
     try {

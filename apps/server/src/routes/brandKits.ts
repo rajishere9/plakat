@@ -12,7 +12,7 @@ function parseKit(input: unknown): BrandKit {
     return loadBrandKit(sanitizeJsonStrings(input));
   } catch (error) {
     const http = schemaErrorToHttp(error);
-    if (http) throw new HttpError(http.statusCode, http.statusCode === 400 ? 'invalid_brand_kit' : http.code, http.message, http.extra);
+    if (http) throw new HttpError(http.statusCode, http.code === 'invalid_document' ? 'invalid_brand_kit' : http.code, http.message, http.extra);
     throw error;
   }
 }

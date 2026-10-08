@@ -137,7 +137,9 @@ export async function buildApp(config: Config, options: BuildAppOptions = {}): P
   // ---- Errors --------------------------------------------------------------
   app.setErrorHandler((error: FastifyError, req, reply) => {
     if (error instanceof HttpError) return reply.code(error.statusCode).send(error.toBody());
-    const schemaError = schemaErrorToHttp(error);
+    // RangeErrors are only the client's fault while parsing input (documents.ts maps those);
+    // anywhere else they are server bugs and stay 500.
+    const schemaError = error instanceof RangeError ? null : schemaErrorToHttp(error);
     if (schemaError) return reply.code(schemaError.statusCode).send(schemaError.toBody());
     if (error.validation) return reply.code(400).send({ error: { code: 'bad_request', message: error.message } });
     // Backstop for values PostgreSQL cannot store (NUL, lone surrogates): a client error, not a 500.

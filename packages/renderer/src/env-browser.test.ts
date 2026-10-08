@@ -5,7 +5,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { fontLoadRequests, collectFonts, googleFontsCssUrl, type Asset } from '@plakat/schema';
 import { canonicalFontCssUrl, createBrowserEnv, isWebKitBrowser } from './env-browser.ts';
-import { FontLoadError } from './errors.ts';
+import { AssetLoadError, FontLoadError } from './errors.ts';
 import { imageAsset, makeDoc, page, pngDataUri, drawPhoto, text, SVG_SRC } from './test-support.ts';
 
 interface FakeLink {
@@ -179,6 +179,25 @@ describe('createBrowserEnv', () => {
     expect([big.width, big.height]).toEqual([960, 640]);
     expect(big).not.toBe(s);
     expect(await env.loadImage(svg.src, svg, 'as_svg', { svgRasterScale: 8 })).toBe(big);
+  });
+
+  it('rejects with AssetLoadError, without creating an image, when resolveSrc refuses a src', async () => {
+    let created = 0;
+    vi.stubGlobal(
+      'Image',
+      class {
+        constructor() {
+          created++;
+        }
+      },
+    );
+    const fake = fakeDocument({ loadedFamilies: new Set() });
+    const env = createBrowserEnv({ document: fake.doc, resolveSrc: () => null });
+    const asset: Asset = imageAsset(pngDataUri(20, 10, drawPhoto), 20, 10);
+    const err = await env.loadImage('https://evil.example/x.png', asset, 'as_remote').catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(AssetLoadError);
+    expect((err as AssetLoadError).assetId).toBe('as_remote');
+    expect(created).toBe(0);
   });
 
   it('detects WebKit for the Safari canvas limit', () => {

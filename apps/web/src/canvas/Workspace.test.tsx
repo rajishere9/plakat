@@ -90,6 +90,7 @@ describe('<Workspace>', () => {
     const ta = document.querySelector('textarea[data-plakat-text-editor]') as HTMLTextAreaElement;
     expect(ta).not.toBeNull();
     expect(ta.value).toBe('Hello');
+    expect(ta.dir).toBe('auto'); // RTL text types in its own direction
     expect(ta.style.fontSize).toBe('32px');
     expect(ta.style.transform).toMatch(/^matrix\(/);
     fireEvent.change(ta, { target: { value: 'Hello\nworld' } });

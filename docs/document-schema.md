@@ -6,7 +6,7 @@ This is the authoritative spec of the Plakat document format: the JSON that the 
 - **Current `schemaVersion`:** `1`.
 - **Golden example:** `packages/schema/src/__fixtures__/example.plakat.json`. It is reproduced in [§13](#13-worked-example), and tests load it.
 
-Decisions are marked **D-n**, each with a one-line rationale. Other packages must not reinterpret a field in a way this document does not state. Change the format only by bumping the version ([§11](#11-versioning--migration)).
+Decisions are marked **D-n**, each with a one-line rationale. Other packages must not reinterpret a field in a way this document does not state. Change the format only by bumping the version ([§11](#11-versioning-and-migration)).
 
 ---
 
@@ -226,10 +226,10 @@ Fills are solid colors only in V1. Use `#rrggbbaa` for per-fill alpha. Gradients
 `src` forms (anything else is rejected):
 
 1. **`data:image/<png|jpeg|webp|gif|svg+xml>[;…],…`** is fully portable. Use it in `.plakat.json` exports and starter templates. Its mime type must equal `mimeType`, and the payload must be valid base64 (with `;base64`) or valid percent-encoding.
-2. **`https://…` or `http://…`** is a remote URL. It must be CORS-enabled for export. Third-party URLs (provider results) are fetched through the server proxy (pipeline doc §3.2).
+2. **`https://…` or `http://…`** is a remote URL. It is accepted on input, but the server never stores it as is and never proxies it: on create, import and update (`POST`/`PUT /api/projects`, `POST /api/templates`, `POST /api/templates/import`, `PUT /api/templates/:id`) it **downloads** the image into its uploads and rewrites `src` to `/uploads/<sha256>.<ext>` (pipeline doc P-4). The download is SSRF-guarded (public addresses only, every redirect hop checked), capped at `MAX_ASSET_BYTES` and timed out, and the sniffed bytes must be the declared `mimeType`; otherwise the request fails with **422 `asset_fetch_failed`** naming the asset. At most **50** not-yet-downloaded remote srcs are fetched per request (URLs the server already downloaded do not count); more fail with 422 `too_many_remote_assets`, so embed them as `data:` URIs instead. A document holds at most 1000 asset entries on the server (413 `too_many_assets`). Provider results (Openverse) are imported the same way, through `POST /api/asset-providers/:id/import`.
 3. **`/…` (root-relative; never `//` or `/\`, which URL parsers resolve to another host)** is a file on the hosting Plakat server, for example `/uploads/<sha256>.png` (uploads are content-addressed). It is only meaningful on that server.
 
-Non-`data:` forms may not contain whitespace, backslashes or control characters. Fetching is policy-checked too (`resolveAssetUrl`/`createFetchAssetFetcher`): root-relative srcs must resolve to the base origin, only http(s) is fetched, and **server-side code must pass `allowRemote: false` or an allow-list predicate**, because srcs in imported files are untrusted (SSRF). On import the server rewrites remote srcs to upload or proxy URLs.
+Non-`data:` forms may not contain whitespace, backslashes or control characters. Fetching is policy-checked too (`resolveAssetUrl`/`createFetchAssetFetcher`): root-relative srcs must resolve to the base origin, only http(s) is fetched, and **server-side code must pass `allowRemote: false` or an allow-list predicate**, because srcs in imported files are untrusted (SSRF). The server rewrites remote srcs to `/uploads/…` on every write (form 2), so stored documents only hold `data:` and root-relative srcs.
 
 - **D-11** Asset ids are registry keys, not identities. Within one document, `cloneWithNewIds()`, `clonePageWithNewIds()`, `cloneElementsWithNewIds()` and `instantiateTemplate()` **keep** asset ids, so duplicates share one registry entry. Ids are **not** globally unique: hand-written portable templates use readable ids (`as_placeholder`, `as_logo`), so two files can use the same id for different images. Content therefore moves **between** documents only through `mergeAssets()` / `importPages()` / `importElements()`: an incoming id is kept when the target lacks it or holds a deep-equal record, reuses the id of an equal record, and otherwise gets a fresh `as_` id with references rewritten. "Add page from template", cross-design paste and inserting a brand-kit logo all use them; never spread one registry into another.
 - Unreferenced entries are allowed, but `instantiateTemplate()` removes them through `pruneUnusedAssets()`.
@@ -287,7 +287,7 @@ Target compatibility, validated:
 | `color` + `fill` | `shape` or `text` elements, writing `fill` |
 | `color` + `stroke` | `shape` elements, writing `stroke` |
 
-The template's own content is the placeholder and default value of each slot. Elements that no slot targets are the "fixed design". In **fill mode** (the "Use template" form) only slots are editable. After instantiation, the result is a normal design and everything is editable, as in Canva.
+The template's own content is the placeholder and default value of each slot. Elements that no slot targets are the "fixed design". In **fill mode** (the "Use template" dialog) the user fills a form with one field per slot (text, image picker, color swatches from `palette`), with a live preview, **before** the design is created; a field left empty keeps the template's own content, and a template without slots skips the form. Only slot values can be changed there, never the fixed design. Submitting calls `instantiateTemplate` and opens the new design, which is a normal design: everything is editable afterwards, slot targets and fixed design alike, as in Canva.
 
 **Fills** passed to `instantiateTemplate` and `applySlotFill` are keyed by slot id:
 
@@ -324,10 +324,10 @@ The input template is never mutated.
 - A file **without** `schemaVersion` is **v0**: loose, unversioned JSON such as hand-written files or prototypes. The real migration `0 → 1` stamps `format`/`schemaVersion` and folds a top-level `width`/`height` into `size`.
 - Migrations are registered in `MIGRATIONS` (`version.ts`). Entry `i` upgrades `i → i+1`. A migration is a **pure function on untyped JSON**: it does not mutate its input and uses no clock or randomness. Migrations are **never deleted or edited** once released.
 - `migrateDocument(json)` applies the steps from the file's version up to `CURRENT_SCHEMA_VERSION`. `loadDocument(json)` migrates and then validates strictly. **`loadDocument` is the only sanctioned way to turn untrusted JSON (files, request bodies, DB rows) into a `PlakatDocument`.**
-- **Files from the future** (`schemaVersion > CURRENT`) are refused with `UnsupportedSchemaVersionError` ("upgrade Plakat"). Plakat never guesses, never opens them read-only, and never downgrades.
+- **Files from the future** (`schemaVersion > CURRENT`) are refused with `UnsupportedSchemaVersionError` ("upgrade Plakat"). Plakat never guesses, never opens them read-only, and never downgrades. The server answers such a request body (`POST`/`PUT /api/projects`, the template routes, `POST /api/templates/import`) with **400 `unsupported_schema_version`**, carrying `found`, `supported` and the "upgrade Plakat" message.
 - A gap in the chain raises `MigrationError`, and so does a non-integer or negative version, or a `format` other than `plakat.document`.
 - **Never break old files:** each release keeps fixture files for every past version. A test loads each fixture through `loadDocument` and asserts the result. Adding version N means adding the migration `N-1 → N`, a fixture at N−1, updating `types.ts` and `validation.ts` (the drift guards force this), and updating this spec.
-- **Storage:** the server stores validated canonical JSON plus a `schema_version` column. It migrates on read and writes the current version back lazily, on the next save.
+- **Storage:** the server stores validated canonical JSON plus a `schema_version` column. Older input (a v0 file sent to any write route) is migrated before it is stored, so rows always hold the current version as written; rows from an older server are migrated on read and written back in the current version lazily, on the next save.
 - Brand kits are versioned the same way, with their own `schemaVersion` and chain (currently v1, with no migrations).
 
 ## 12. Brand kit

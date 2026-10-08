@@ -60,6 +60,7 @@ describe('brand kits API', () => {
     expect((await t.app.inject({ method: 'POST', url: '/api/brand-kits', payload: { kit: { format: 'nope' } } })).statusCode).toBe(400);
     expect((await t.app.inject({ method: 'POST', url: '/api/brand-kits', payload: {} })).statusCode).toBe(400);
     const future = await t.app.inject({ method: 'POST', url: '/api/brand-kits', payload: { kit: { ...kit, schemaVersion: 7 } } });
-    expect(future.statusCode).toBe(422);
+    expect(future.statusCode).toBe(400);
+    expect(future.json().error).toMatchObject({ code: 'unsupported_schema_version', found: 7, supported: 1 });
   });
 });

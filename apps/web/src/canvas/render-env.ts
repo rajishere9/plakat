@@ -7,9 +7,34 @@ import type { PageSize, PlakatDocument } from '@plakat/schema';
 
 let shared: RenderEnv | null = null;
 
+/** Path prefix of the server's content-addressed uploads. */
+export const UPLOADS_PATH_PREFIX = '/uploads/';
+
+/**
+ * The editor's asset src policy (render-export-pipeline.md P-4): the canvas only loads
+ * `data:image/…` URIs and this origin's `/uploads/…` files. The server downloads every
+ * remote src into uploads before storing a document, so anything else (a remote URL, an
+ * API path, another host via `//` or `/\`, `..` escaping /uploads/) is never fetched: it
+ * resolves to null and is drawn as a missing-asset placeholder (export refuses it).
+ * Returns the URL to load.
+ */
+export function allowedAssetSrc(src: string, origin: string | null = typeof location !== 'undefined' ? location.origin : null): string | null {
+  if (/^data:image\//i.test(src)) return src;
+  // Only the schema's other two forms: root-relative (never `//` or `/\`) or absolute http(s).
+  if (!origin || origin === 'null' || !/^(\/(?![/\\])|https?:\/\/)/i.test(src)) return null;
+  let url: URL;
+  try {
+    url = new URL(src, origin);
+  } catch {
+    return null;
+  }
+  if (url.origin !== origin || !url.pathname.startsWith(UPLOADS_PATH_PREFIX) || url.username || url.password) return null;
+  return url.pathname + url.search;
+}
+
 /** The shared browser env (created lazily). Use it for exports too: images are cached by src. */
 export function getRenderEnv(): RenderEnv {
-  if (!shared) shared = createBrowserEnv();
+  if (!shared) shared = createBrowserEnv({ resolveSrc: (src) => allowedAssetSrc(src) });
   return shared;
 }
 

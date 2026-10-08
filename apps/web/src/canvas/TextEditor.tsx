@@ -206,6 +206,7 @@ function InlineTextEditor({ id, controller, store }: { id: Id; controller: Works
       ref={ref}
       data-plakat-text-editor=""
       aria-label="Edit text"
+      dir="auto"
       spellCheck={false}
       value={value}
       style={style}

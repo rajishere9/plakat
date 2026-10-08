@@ -39,9 +39,14 @@ export function Dialog({ open, onClose, title, description, children, footer, si
     if (!open) return;
     openDialogs++;
     const previous = document.activeElement as HTMLElement | null;
+    // Take focus right away so Escape and Tab reach the dialog even when pressed before the
+    // deferred autofocus below runs (e.g. `?` then Escape in quick succession on the canvas,
+    // whose window-level shortcuts are muted while a dialog is open).
+    const initial = panelRef.current;
+    if (initial && !initial.contains(document.activeElement)) initial.focus({ preventScroll: true });
     const t = setTimeout(() => {
       const panel = panelRef.current;
-      if (!panel || panel.contains(document.activeElement)) return;
+      if (!panel || (panel.contains(document.activeElement) && document.activeElement !== panel)) return;
       (panel.querySelector<HTMLElement>('[data-autofocus]') ?? panel.querySelector<HTMLElement>(FOCUSABLE) ?? panel).focus();
     });
     return () => {

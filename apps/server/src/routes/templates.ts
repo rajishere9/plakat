@@ -2,7 +2,6 @@ import { createId, type PageSize, type PlakatDocument } from '@plakat/schema';
 import type { FastifyInstance } from 'fastify';
 import { bodyField, idParam, toIso, type AppContext } from '../context.ts';
 import {
-  bundleDocumentForExport,
   cleanQueryString,
   documentSummary,
   escapeLike,
@@ -12,7 +11,7 @@ import {
   withUpdatedAt,
 } from '../documents.ts';
 import { HttpError, notFound } from '../errors.ts';
-import { sendPortableFile } from './projects.ts';
+import { sendStoredAsPortableFile } from './projects.ts';
 import { sendThumbnail, storeThumbnail, thumbnailUrl } from './thumbnails.ts';
 
 const EPOCH = '1970-01-01T00:00:00.000Z';
@@ -190,8 +189,7 @@ export function registerTemplateRoutes(app: FastifyInstance, ctx: AppContext): v
     const id = idParam(req.params, 'Template');
     const { rows } = await db.query<{ document: unknown }>('SELECT document FROM templates WHERE id = $1', [id]);
     if (!rows[0]) throw notFound('Template');
-    const doc = await bundleDocumentForExport(loadStoredDocument(rows[0].document), ctx.uploads);
-    return sendPortableFile(reply, doc);
+    return sendStoredAsPortableFile(ctx, reply, rows[0].document);
   });
 
   app.put('/api/templates/:id/thumbnail', async (req) => {

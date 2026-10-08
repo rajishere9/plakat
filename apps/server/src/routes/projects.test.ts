@@ -102,7 +102,7 @@ describe('projects API', () => {
     const noDoc = await t.app.inject({ method: 'POST', url: '/api/projects', payload: { title: 'x' } });
     expect(noDoc.statusCode).toBe(400);
     const future = await t.app.inject({ method: 'POST', url: '/api/projects', payload: { document: { ...doc, schemaVersion: 99 } } });
-    expect(future.statusCode).toBe(422);
+    expect(future.statusCode).toBe(400);
     expect(future.json().error.code).toBe('unsupported_schema_version');
   });
 
@@ -184,6 +184,35 @@ describe('projects API', () => {
     expect(wrongType.statusCode).toBe(415);
     const missing = await t.app.inject({ method: 'PUT', url: '/api/projects/doc_missing1/thumbnail', headers: { 'content-type': 'image/png' }, payload: png });
     expect(missing.statusCode).toBe(404);
+  });
+
+  it('portable download drops unreferenced assets before bundling', async () => {
+    const png = makePng(4, 3);
+    const doc = sampleDesign('Pruned');
+    const used = createImageAsset({ src: `data:image/png;base64,${png.toString('base64')}`, width: 4, height: 3, mimeType: 'image/png' });
+    doc.assets[used.id] = used.asset;
+    doc.pages[0]!.elements.push(createImageElement(used.id, used.asset));
+    // Stale entries no element references: one that could never be bundled, one that could.
+    doc.assets['as_stale_remote'] = { ...used.asset, src: '/not-an-upload/gone.png' };
+    doc.assets['as_stale_data'] = { ...used.asset, name: 'stale' };
+    const created = await t.app.inject({ method: 'POST', url: '/api/projects', payload: { document: doc } });
+    expect(created.statusCode).toBe(201);
+    expect(Object.keys(created.json().document.assets).sort()).toEqual(['as_stale_data', 'as_stale_remote', used.id].sort());
+    const file = await t.app.inject({ method: 'GET', url: `/api/projects/${doc.id}/file` });
+    expect(file.statusCode).toBe(200);
+    const exported = file.json();
+    expect(Object.keys(exported.assets)).toEqual([used.id]);
+    expect(exported.assets[used.id].src).toBe(used.asset.src);
+  });
+
+  it('a stored document that cannot be exported is 422 not_exportable (not 400/500)', async () => {
+    const doc = sampleDesign('Broken later');
+    expect((await t.app.inject({ method: 'POST', url: '/api/projects', payload: { document: doc } })).statusCode).toBe(201);
+    await t.app.plakat.db.query(`UPDATE projects SET document = jsonb_set(document, '{pages}', '[]'::jsonb) WHERE id = $1`, [doc.id]);
+    const res = await t.app.inject({ method: 'GET', url: `/api/projects/${doc.id}/file` });
+    expect(res.statusCode).toBe(422);
+    expect(res.json().error.code).toBe('not_exportable');
+    expect(res.json().error.issues.length).toBeGreaterThan(0);
   });
 
   it('unknown API routes and invalid ids are JSON 404s', async () => {

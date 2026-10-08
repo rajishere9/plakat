@@ -25,10 +25,12 @@ export interface BrowserEnvOptions {
   /** Per-variant fallback URL (default googleFontVariantCssUrl). */
   fontVariantCssUrl?: (family: string, variant: FontVariant) => string;
   /**
-   * Map an asset src to the URL actually loaded (e.g. route third-party URLs through
-   * `/api/assets/proxy?url=…`, P-4). Default: the src itself.
+   * Map an asset src to the URL actually loaded, or return null to refuse it (a src
+   * policy, P-4): a refused src rejects with AssetLoadError without any network request,
+   * so the editor draws its missing-asset placeholder and export refuses. Default: the
+   * src itself.
    */
-  resolveSrc?: (src: string, asset: Asset) => string;
+  resolveSrc?: (src: string, asset: Asset) => string | null;
   /** Override the WebKit detection used for canvas limits. */
   canvasLimits?: CanvasLimits;
   /** Document to use (default: global `document`, read lazily). */
@@ -132,11 +134,13 @@ export function createBrowserEnv(opts: BrowserEnvOptions = {}): RenderEnv {
   }
 
   async function loadImageUncached(src: string, asset: Asset, assetId: Id, svgScale: number): Promise<DecodedImage> {
+    const url = opts.resolveSrc ? opts.resolveSrc(src, asset) : src;
+    if (url === null) throw new AssetLoadError(assetId, `Image asset "${assetId}" has a src that this render env refuses to load`);
     const doc = getDoc();
     const img = new Image();
     img.crossOrigin = 'anonymous'; // must be set BEFORE src (P-4)
     img.decoding = 'async';
-    img.src = opts.resolveSrc ? opts.resolveSrc(src, asset) : src;
+    img.src = url;
     try {
       await img.decode();
     } catch (err) {
